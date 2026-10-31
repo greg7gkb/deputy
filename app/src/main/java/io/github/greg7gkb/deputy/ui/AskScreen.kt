@@ -68,10 +68,18 @@ fun AskScreen(
         app.act({ app.planner.handle(r) })
     }
 
-    // Item indexes before the transcript, so new steps can be scrolled into view.
-    val firstStep = 4 + (if (calendarGranted) 0 else 1)
-    LaunchedEffect(transcript.size) {
-        if (transcript.isNotEmpty()) list.animateScrollToItem(firstStep + transcript.lastIndex)
+    // One card per request, newest first (the same order as Keyring and Activity); steps read
+    // top to bottom inside each card.
+    val runs = remember(transcript) {
+        transcript.fold(mutableListOf<List<Step>>()) { acc, step ->
+            if (step.kind == Step.Kind.USER || acc.isEmpty()) acc += listOf(step) else acc[acc.lastIndex] = acc.last() + step
+            acc
+        }.reversed()
+    }
+    // The newest request is the first card; keep it in view as it fills in.
+    val firstRun = 4 + (if (calendarGranted) 0 else 1)
+    LaunchedEffect(runs.size) {
+        if (runs.isNotEmpty()) list.animateScrollToItem(firstRun)
     }
 
     ScreenColumn(list) {
@@ -80,6 +88,11 @@ fun AskScreen(
         item {
             Column {
                 SectionLabel("Ask Deputy")
+                Text(
+                    "In Phase 0 the assistant is a script, not an AI. It can only propose; Deputy decides.",
+                    style = Type.Sub.copy(fontSize = 12.5.sp),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
                 VSpace(8.dp)
                 AskInput(text, onChange = { text = it }, enabled = !busy, onSend = { send(text) })
             }
@@ -87,12 +100,11 @@ fun AskScreen(
         item { Suggestions(app.planner.suggestions, enabled = !busy, onPick = ::send) }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SectionLabel(if (transcript.isEmpty()) "Nothing asked yet" else "Assistant", Modifier.weight(1f))
+                SectionLabel(if (transcript.isEmpty()) "Nothing asked yet" else "Requests, newest first", Modifier.weight(1f))
                 if (transcript.isNotEmpty() && !busy) SmallButton("Clear", onClick = { app.planner.clear() })
             }
         }
-        itemsIndexed(transcript) { _, step -> StepView(step) }
-        if (busy) item { Text("working…", style = Type.Mono) }
+        itemsIndexed(runs) { i, run -> RunCard(run, working = busy && i == 0) }
         item { TodayCard(snapshot, items, onSeeActivity) }
     }
 }
@@ -194,7 +206,32 @@ private fun Suggestions(suggestions: List<String>, enabled: Boolean, onPick: (St
     }
 }
 
-/** One planner step. Proposals are the typed tool calls; the broker lines are its verdicts. */
+/** Who each kind of step comes from. */
+private fun actorOf(kind: Step.Kind) = when (kind) {
+    Step.Kind.USER -> Actors.YOU
+    Step.Kind.SAYS, Step.Kind.PROPOSES -> Actors.ASSISTANT
+    Step.Kind.BROKER -> Actors.DEPUTY
+}
+
+/** One request and everything that followed it, with a caption whenever the actor changes. */
+@Composable
+private fun RunCard(run: List<Step>, working: Boolean) {
+    DCard(padding = 12.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            run.forEachIndexed { i, step ->
+                val actor = actorOf(step.kind)
+                if (step.kind != Step.Kind.USER && (i == 0 || actorOf(run[i - 1].kind) != actor)) {
+                    Text(actor.uppercase(), style = Type.Mono.copy(fontSize = 10.sp, color = if (actor == Actors.DEPUTY) Palette.Green else Palette.Muted),
+                        modifier = Modifier.padding(top = 4.dp))
+                }
+                StepView(step)
+            }
+            if (working) Text("working…", style = Type.Mono)
+        }
+    }
+}
+
+/** One planner step. Proposals are the typed tool calls; Deputy's lines are its verdicts. */
 @Composable
 private fun StepView(step: Step) {
     when (step.kind) {
@@ -214,7 +251,7 @@ private fun StepView(step: Step) {
         Step.Kind.BROKER -> {
             val refused = step.text.startsWith("refused")
             Text(
-                "broker · ${step.text}",
+                step.text,
                 style = Type.Mono.copy(color = if (refused) Palette.Red else Palette.Muted),
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
@@ -231,7 +268,7 @@ private fun ProposalCard(step: Step) {
     val detail = step.detail
     DCard(padding = 10.dp, modifier = Modifier.clickable(enabled = detail != null) { open = !open }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("proposes ", style = Type.Mono)
+            Text("asks Deputy: ", style = Type.Mono)
             Text(step.text, style = Type.Mono.copy(fontSize = 13.sp, color = Palette.Ink), modifier = Modifier.weight(1f))
             if (detail != null) Text(if (open) "hide" else "details", style = Type.Mono.copy(color = Palette.Green))
         }

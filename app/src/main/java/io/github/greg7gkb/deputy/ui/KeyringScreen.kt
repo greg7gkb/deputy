@@ -66,7 +66,7 @@ fun KeyringScreen(app: DeputyApp, snapshot: BrokerSnapshot) {
     }
 
     ScreenColumn {
-        item { ScreenHeader("Keyring", "Each key opens one thing, for a while.") }
+        item { ScreenHeader("Keyring", "Each key opens one thing, for a while. Newest first.") }
         item { Segmented(listOf("May do · $activeOut", "Who may ask · $activeIn"), segment) { segment = it } }
         if (active.isEmpty()) item {
             DCard {
@@ -77,7 +77,7 @@ fun KeyringScreen(app: DeputyApp, snapshot: BrokerSnapshot) {
                 )
             }
         }
-        items(active, key = { it.grantId.value }) { KeyCard(it, revoking = it.grantId in revoking, onRevoke = { revoke(it.grantId) }) }
+        items(active, key = { it.grantId.value }) { KeyCard(it, Actors.label(it.holderPrincipal, app.lab), revoking = it.grantId in revoking, onRevoke = { revoke(it.grantId) }) }
         item {
             Column {
                 SectionLabel("Add a key")
@@ -85,7 +85,7 @@ fun KeyringScreen(app: DeputyApp, snapshot: BrokerSnapshot) {
                 LineButton(
                     if (direction == Direction.OUTBOUND) "Calendar for scheduling, for the assistant" else "Let Zane ask about weekday evenings",
                     onClick = ::add,
-                    enabled = !adding && !(direction == Direction.INBOUND && active.any { it.holder == app.lab.zane.displayName }),
+                    enabled = !adding && !(direction == Direction.INBOUND && active.any { it.holderPrincipal == app.lab.zane }),
                 )
             }
         }
@@ -99,17 +99,17 @@ fun KeyringScreen(app: DeputyApp, snapshot: BrokerSnapshot) {
                     modifier = Modifier.clickable { showEnded = !showEnded }.padding(top = 10.dp, bottom = 2.dp),
                 )
             }
-            if (showEnded) items(ended, key = { it.grantId.value }) { KeyCard(it, revoking = false, onRevoke = {}) }
+            if (showEnded) items(ended, key = { it.grantId.value }) { KeyCard(it, Actors.label(it.holderPrincipal, app.lab), revoking = false, onRevoke = {}) }
         }
     }
 }
 
 @Composable
-private fun KeyCard(view: KeyView, revoking: Boolean, onRevoke: () -> Unit) {
+private fun KeyCard(view: KeyView, holder: String, revoking: Boolean, onRevoke: () -> Unit) {
     DCard(Modifier.alpha(if (view.active) 1f else 0.55f)) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
-                Text(view.holder, style = Type.Mono)
+                Text("held by $holder", style = Type.Mono)
                 Text(view.title, style = Type.CardTitle)
                 Text(view.sentence, style = Type.Sub, modifier = Modifier.padding(top = 3.dp))
             }

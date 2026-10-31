@@ -249,3 +249,21 @@ Accepted for now, recorded so they aren't forgotten:
   source, but its labels matter (D11); once labels can be raised by the user, label changes
   must be journaled.
 - **Same-process boundary** (D4): reflection could cross from the planner to the UserPort.
+
+## D19. Everything Deputy creates links back to where it came from (default)
+
+Every artifact Deputy creates outside itself gets an id before the adapter runs
+(`ActionExecuted.artifactId`), and `deputy://activity/<id>` opens Activity at that entry,
+outlined, with Undo and an "Open in Calendar" link back the other way. The link is written
+into the artifact only where just the user sees it: a hold's description carries it, but an
+invite's description goes to every attendee, so invites get an id and the link stays on
+Deputy's side. The app accepts only well-formed links (`Artifacts.parse`), and opening one
+only *shows* an entry; a link can never act.
+
+Assumption to test: Google Calendar may not make a custom-scheme link tappable. If it doesn't,
+the fix is an https App Link on a domain the user controls (e.g. a GitHub Pages site serving
+`/.well-known/assetlinks.json`), with the same path shape.
+
+Also in this change: a `Principal`'s identity is its kind and id, not its display name, so
+relabelling an actor ("Assistant (scripted)") can never move authority. And every screen now
+reads newest first, with each Ask request as its own card.

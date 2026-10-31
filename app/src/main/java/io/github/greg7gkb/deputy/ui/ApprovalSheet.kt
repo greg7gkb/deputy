@@ -78,7 +78,7 @@ fun ApprovalSheet(app: DeputyApp, snapshot: BrokerSnapshot) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Badge(if (view.kind == ApprovalKind.MINT_GRANT) "New key" else "Asks first", BadgeStyle.ASK)
                 Spacer(Modifier.width(8.dp))
-                Text("from ${req.principal.displayName.lowercase()}", style = Type.Mono, modifier = Modifier.weight(1f))
+                Text("from ${Actors.label(req.principal, app.lab)}", style = Type.Mono, modifier = Modifier.weight(1f))
                 if (live.size > 1) Text("1 of ${live.size}", style = Type.Mono)
             }
             Text(view.headline, style = Type.Title.copy(fontSize = 20.sp))

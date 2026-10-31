@@ -39,9 +39,14 @@ interface CalendarAdapter {
     val source: String
     /** Busy intervals only. Implementations must not read titles, attendees or locations. */
     suspend fun readBusy(window: Interval): List<Interval>
-    /** Returns an adapter-internal reference, kept by the broker and never shown to a proposer. */
-    suspend fun placeHold(slot: Interval, title: String): String
+    /**
+     * Returns an adapter-internal reference, kept by the broker and never shown to a proposer.
+     * [note] is Deputy's provenance note with a link back to Activity; write it where the user sees it.
+     */
+    suspend fun placeHold(slot: Interval, title: String, note: String): String
+    /** Must only remove an event whose note starts with [Artifacts.NOTE_PREFIX]. */
     suspend fun releaseHold(adapterRef: String)
+    /** Attendees see this event, so there is no note; Deputy keeps the link on its own side. */
     suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String
 }
 
@@ -447,6 +452,7 @@ class Broker(
     ): Outcome {
         val now = now()
         var adapterRef: String? = null
+        var artifactId: String? = null
         // Step 1: the side effect. Only a failure here is an ActionFailed.
         val result: ActionResult = try {
             when (action) {
@@ -465,8 +471,10 @@ class Broker(
                 }
                 is Action.PlaceHold -> {
                     val slot = Interval.of(action.start, action.durationMinutes)
-                    adapterRef = adapterCall { calendar.placeHold(slot, "Hold: ${action.label}") }
-                    ActionResult.HoldPlaced(HoldId(newId("h")), slot)
+                    val holdId = HoldId(newId("h"))
+                    artifactId = holdId.value
+                    adapterRef = adapterCall { calendar.placeHold(slot, "Hold: ${action.label}", Artifacts.note(holdId.value)) }
+                    ActionResult.HoldPlaced(holdId, slot)
                 }
                 is Action.ReleaseHold -> {
                     val hold = state.holds.getValue(action.holdId)
@@ -476,6 +484,7 @@ class Broker(
                 }
                 is Action.SendInvite -> {
                     val slot = Interval.of(action.start, action.durationMinutes)
+                    artifactId = newId("a")
                     adapterRef = adapterCall { calendar.createEvent(slot, action.title, action.attendees) }
                     ActionResult.InviteSent(slot, action.attendees)
                 }
@@ -487,7 +496,7 @@ class Broker(
             return Outcome.Failed("${Capabilities.spec(action.capability)?.title ?: "That"} didn't work. The details are in your Activity.")
         }
         // Step 2: the record. Once the world has changed it must be journaled, whatever else fails (F8).
-        val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf))
+        val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf, artifactId))
         // Step 3: housekeeping. Calendar writes make the cached busy view stale; best effort.
         if (action !is Action.FindFreeSlots) runCatching { invalidateBusy() }
         return Outcome.Done(result, entry.seq)

@@ -66,6 +66,8 @@ sealed interface Event {
         val adapterRef: String? = null,
         /** Journal seq of the action this one undid, when the user tapped Undo. */
         val undoOf: Long? = null,
+        /** The id of what this action created, linked from the artifact back to here (D19). */
+        val artifactId: String? = null,
     ) : Event
 
     @Serializable @SerialName("action_refused")

@@ -30,6 +30,9 @@ class Lab(private val context: Context, private val broker: Broker) {
     val zane = Principal.peer("zane", "Zane")
     val stranger = Principal.peer("unpaired-7f3a", "An unpaired Deputy")
 
+    /** Peers that exist only in the Lab. Their questions are pretend; the broker answering is real. */
+    fun isSimulated(p: Principal) = p == zane || p == stranger
+
     suspend fun seedCalendar(): Int = TestCalendar.seed(context)
 
     /** You let Zane's Deputy ask whether you're free on weekday evenings. */

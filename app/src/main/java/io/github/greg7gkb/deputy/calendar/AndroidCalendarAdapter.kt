@@ -9,6 +9,7 @@ import android.provider.CalendarContract.Attendees
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
 import android.provider.CalendarContract.Instances
+import deputy.broker.Artifacts
 import deputy.broker.CalendarAdapter
 import deputy.broker.Interval
 import kotlinx.coroutines.Dispatchers
@@ -50,8 +51,8 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
         busy
     }
 
-    override suspend fun placeHold(slot: Interval, title: String): String = withContext(Dispatchers.IO) {
-        insertEvent(slot, title, Events.AVAILABILITY_TENTATIVE, emptyList())
+    override suspend fun placeHold(slot: Interval, title: String, note: String): String = withContext(Dispatchers.IO) {
+        insertEvent(slot, title, Events.AVAILABILITY_TENTATIVE, emptyList(), note)
     }
 
     override suspend fun releaseHold(adapterRef: String) = withContext(Dispatchers.IO) {
@@ -60,7 +61,7 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
         // a selection on a by-id delete, so check the marker with a query first.
         val uri = ContentUris.withAppendedId(Events.CONTENT_URI, adapterRef.toLong())
         val ours = context.contentResolver.query(uri, arrayOf(Events.DESCRIPTION), null, null, null)?.use { c ->
-            c.moveToFirst() && c.getString(0) == MARKER
+            c.moveToFirst() && c.getString(0)?.startsWith(Artifacts.NOTE_PREFIX) == true
         } ?: false
         check(ours) { "the hold was not found in the calendar" }
         val deleted = context.contentResolver.delete(uri, null, null)
@@ -68,10 +69,10 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
     }
 
     override suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String = withContext(Dispatchers.IO) {
-        insertEvent(slot, title, Events.AVAILABILITY_BUSY, attendees)
+        insertEvent(slot, title, Events.AVAILABILITY_BUSY, attendees, note = null)
     }
 
-    private fun insertEvent(slot: Interval, title: String, availability: Int, attendees: List<String>): String {
+    private fun insertEvent(slot: Interval, title: String, availability: Int, attendees: List<String>, note: String?): String {
         requirePermission(Manifest.permission.WRITE_CALENDAR)
         val calendarId = writableCalendarId() ?: error("no writable calendar on this phone")
         val values = ContentValues().apply {
@@ -79,7 +80,7 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
             put(Events.DTSTART, slot.start.toEpochMilliseconds())
             put(Events.DTEND, slot.end.toEpochMilliseconds())
             put(Events.TITLE, title)
-            put(Events.DESCRIPTION, MARKER)
+            if (note != null) put(Events.DESCRIPTION, note)
             put(Events.AVAILABILITY, availability)
             put(Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
             if (attendees.isNotEmpty()) put(Events.HAS_ATTENDEE_DATA, 1)
@@ -117,10 +118,5 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
         if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
             throw SecurityException("Deputy doesn't have calendar permission yet")
         }
-    }
-
-    companion object {
-        /** Written into every event Deputy creates, so it can only ever delete its own. */
-        const val MARKER = "Placed by Deputy. Undo it from Deputy's Activity."
     }
 }

@@ -1,7 +1,9 @@
 package io.github.greg7gkb.deputy
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import deputy.broker.Artifacts
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -18,6 +20,8 @@ import io.github.greg7gkb.deputy.ui.DeputyTheme
 class MainActivity : ComponentActivity() {
     private val calendarPermissions = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
     private var calendarGranted by mutableStateOf(false)
+    /** The artifact a deputy://activity/<id> link asked to see, until the person moves on. */
+    private var focusArtifact by mutableStateOf<String?>(null)
     private val askForCalendar = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { checkCalendar() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,14 +29,29 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         super.onCreate(savedInstanceState)
         val app = application as DeputyApp
+        focusArtifact = linkedArtifact(intent)
         checkCalendar()
         if (!calendarGranted && savedInstanceState == null) askForCalendar.launch(calendarPermissions)
         setContent {
             DeputyTheme {
-                DeputyRoot(app, calendarGranted, onRequestCalendar = { askForCalendar.launch(calendarPermissions) })
+                DeputyRoot(
+                    app, calendarGranted,
+                    onRequestCalendar = { askForCalendar.launch(calendarPermissions) },
+                    focusArtifact = focusArtifact,
+                    onFocusDone = { focusArtifact = null },
+                )
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        linkedArtifact(intent)?.let { focusArtifact = it }
+    }
+
+    /** Only well-formed Deputy links are accepted; anything else is ignored. */
+    private fun linkedArtifact(intent: Intent?): String? = intent?.dataString?.let(Artifacts::parse)
 
     /** The person can grant or revoke in Settings while we're away, so re-check on every resume. */
     override fun onResume() {

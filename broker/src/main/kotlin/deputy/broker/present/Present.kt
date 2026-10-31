@@ -34,6 +34,7 @@ data class KeyView(
     val sentence: String,
     val chips: List<String>,
     val holder: String,
+    val holderPrincipal: Principal,
     val direction: Direction,
     val status: GrantRecord.Status,
     val active: Boolean,
@@ -51,7 +52,17 @@ data class ActivityItem(
     val tone: Tone,
     /** Non-null if the person can undo this entry; pass to UserPort.undo. */
     val undoSeq: Long? = null,
+    /** Who did or asked this. Null means Deputy itself (reading the calendar, expiring requests). */
+    val actor: Principal? = null,
+    /** What this entry created outside Deputy, which links back here (deputy://activity/<id>). */
+    val artifactId: String? = null,
+    /** Where that artifact lives, so the app can open it, e.g. the event in the calendar. */
+    val external: ExternalRef? = null,
 )
+
+data class ExternalRef(val kind: Kind, val ref: String) {
+    enum class Kind { CALENDAR_EVENT }
+}
 
 data class ApprovalView(
     val requestId: deputy.broker.RequestId,
@@ -75,7 +86,7 @@ object Keyring {
             if (!g.delegable) add("no re-sharing")
             if (status != GrantRecord.Status.ACTIVE) add(status.name.lowercase().replace('_', ' '))
         }
-        return KeyView(g.id, g.title, sentence(g), chips, g.holder.displayName, g.direction, status, status == GrantRecord.Status.ACTIVE)
+        return KeyView(g.id, g.title, sentence(g), chips, g.holder.displayName, g.holder, g.direction, status, status == GrantRecord.Status.ACTIVE)
     }
 
     fun sentence(g: Grant): String {
@@ -148,7 +159,7 @@ object Narrator {
             val e = entry.event
             val time = Format.time(e.at, zone, snapshot.now)
             fun key(id: GrantId?) = id?.let { grants[it]?.grant?.title }?.let { "key: $it" }
-            when (e) {
+            val item = when (e) {
                 is Event.GrantMinted -> ActivityItem(entry.seq, e.at, time, "New key: ${e.grant.title}", Keyring.sentence(e.grant),
                     if (e.viaRequest != null) "asked for by ${e.grant.holder.displayName.lowercase()} · you approved" else "for ${e.grant.holder.displayName}", Tone.SYSTEM)
                 is Event.GrantRevoked -> ActivityItem(entry.seq, e.at, time, "Revoked: ${grants[e.grantId]?.grant?.title ?: "a key"}",
@@ -184,7 +195,29 @@ object Narrator {
                     "observed · ${e.source}", Tone.SYSTEM)
                 is Event.InboundAsked -> narrateInbound(entry.seq, e, time, grants, zone, snapshot.now)
             }
+            item.copy(actor = actorOf(e), artifactId = (e as? Event.ActionExecuted)?.artifactId, external = externalOf(e, activeHolds))
         }.reversed()
+    }
+
+    /** Who did it. The person for their own decisions, the proposer or asker otherwise, null for Deputy. */
+    fun actorOf(e: Event): Principal? = when (e) {
+        is Event.GrantMinted, is Event.GrantRevoked, is Event.KillSwitch, is Event.ApprovalResolved -> Principal.User
+        is Event.ApprovalRequested -> e.principal
+        is Event.ActionExecuted -> e.principal
+        is Event.ActionRefused -> e.principal
+        is Event.ActionFailed -> e.principal
+        is Event.InboundAsked -> e.asker
+        is Event.ApprovalExpired, is Event.FactsRefreshed -> null
+    }
+
+    private fun externalOf(e: Event, activeHolds: Set<deputy.broker.HoldId>): ExternalRef? {
+        val executed = e as? Event.ActionExecuted ?: return null
+        val ref = executed.adapterRef ?: return null
+        return when (val r = executed.result) {
+            is ActionResult.HoldPlaced -> if (r.holdId in activeHolds) ExternalRef(ExternalRef.Kind.CALENDAR_EVENT, ref) else null
+            is ActionResult.InviteSent -> ExternalRef(ExternalRef.Kind.CALENDAR_EVENT, ref)
+            else -> null
+        }
     }
 
     private fun narrateExecuted(seq: Long, e: Event.ActionExecuted, time: String, key: String?, zone: TimeZone, s: BrokerSnapshot, activeHolds: Set<deputy.broker.HoldId>): ActivityItem {

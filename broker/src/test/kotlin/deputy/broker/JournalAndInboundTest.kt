@@ -155,3 +155,42 @@ class SlotsTest {
         assertEquals(setOf(MONDAY.plusDays(1), MONDAY.plusDays(2)), slots.map { it.start.toLocalDateTime(ZONE).date }.toSet())
     }
 }
+
+class ArtifactTest {
+    @Test fun `a hold carries a link back to its own activity entry`() = runTest {
+        val rig = Rig()
+        val key = rig.calendarKey()
+        val done = assertIs<Outcome.Done>(rig.agent.propose(key, Action.PlaceHold(at(MONDAY, 14), 60, "Dana")))
+        val holdId = assertIs<ActionResult.HoldPlaced>(done.result).holdId
+        val note = rig.calendar.notes.values.single()
+        assertTrue(note.startsWith(Artifacts.NOTE_PREFIX), note)
+        val linked = Artifacts.parse(note.substringAfter("Deputy: "))
+        assertEquals(holdId.value, linked)
+
+        val item = Narrator.narrate(rig.broker.snapshots.value).first { it.artifactId == linked }
+        assertEquals(done.seq, item.seq)
+        assertNotNull(item.external)
+        assertEquals(Principal.Assistant, item.actor)
+    }
+
+    @Test fun `invites are seen by others, so they carry no link but still get an artifact id`() = runTest {
+        val rig = Rig()
+        val key = rig.calendarKey(GrantTemplates.sendInvites(listOf("dana@example.com")))
+        val asked = assertIs<Outcome.AwaitingUser>(rig.agent.propose(key, Action.SendInvite(at(MONDAY.plusDays(2), 10), 60, "Catch up", listOf("dana@example.com"))))
+        rig.user.approve(asked.requestId)
+        assertTrue(rig.calendar.notes.isEmpty())
+        assertNotNull(rig.events().filterIsInstance<Event.ActionExecuted>().single().artifactId)
+    }
+
+    @Test fun `links parse strictly`() {
+        assertEquals("h_123", Artifacts.parse("deputy://activity/h_123"))
+        for (bad in listOf("deputy://activity/", "deputy://activity/../x", "https://evil/h_1", "deputy://keyring/h_1", "deputy://activity/" + "a".repeat(65))) {
+            assertNull(Artifacts.parse(bad), bad)
+        }
+    }
+
+    @Test fun `identity is kind and id, not the display name`() {
+        assertEquals(Principal.Assistant, Principal(Principal.Kind.ASSISTANT, "assistant", "Assistant (scripted)"))
+        assertTrue(Principal.peer("zane", "Zane") != Principal(Principal.Kind.ASSISTANT, "zane", "Zane"))
+    }
+}

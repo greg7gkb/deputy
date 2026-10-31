@@ -7,6 +7,7 @@ import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
+import deputy.broker.Artifacts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
@@ -42,8 +43,8 @@ object TestCalendar {
             ContentUris.parseId(resolver.insert(asSyncAdapter(Calendars.CONTENT_URI), values)!!)
         }
         // Start clean: remove previously seeded events (but never Deputy's own holds).
-        resolver.delete(Events.CONTENT_URI, "${Events.CALENDAR_ID} = ? AND (${Events.DESCRIPTION} IS NULL OR ${Events.DESCRIPTION} != ?)",
-            arrayOf(calendarId.toString(), AndroidCalendarAdapter.MARKER))
+        resolver.delete(Events.CONTENT_URI, "${Events.CALENDAR_ID} = ? AND (${Events.DESCRIPTION} IS NULL OR ${Events.DESCRIPTION} NOT LIKE ?)",
+            arrayOf(calendarId.toString(), Artifacts.NOTE_PREFIX + "%"))
 
         val zone = ZoneId.systemDefault()
         var count = 0

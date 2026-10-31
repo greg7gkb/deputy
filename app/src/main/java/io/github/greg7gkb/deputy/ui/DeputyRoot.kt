@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,11 +40,13 @@ enum class Tab(val label: String) { ASK("Ask"), CAN_DO("Can do"), KEYRING("Keyri
  * every tab because the broker can ask at any time (the planner suspends until you answer).
  */
 @Composable
-fun DeputyRoot(app: DeputyApp, calendarGranted: Boolean, onRequestCalendar: () -> Unit) {
+fun DeputyRoot(app: DeputyApp, calendarGranted: Boolean, onRequestCalendar: () -> Unit, focusArtifact: String? = null, onFocusDone: () -> Unit = {}) {
     val snapshot by app.broker.snapshots.collectAsStateWithLifecycle()
     val items = remember(snapshot) { Narrator.narrate(snapshot) }
     var tab by rememberSaveable { mutableStateOf(Tab.ASK) }
     val labLog = remember { mutableStateListOf<String>() }
+    // A deputy://activity link opens Activity at that entry.
+    LaunchedEffect(focusArtifact) { if (focusArtifact != null) tab = Tab.ACTIVITY }
 
     Box(Modifier.fillMaxSize().background(Palette.Background)) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
@@ -52,11 +55,11 @@ fun DeputyRoot(app: DeputyApp, calendarGranted: Boolean, onRequestCalendar: () -
                     Tab.ASK -> AskScreen(app, snapshot, items, calendarGranted, onRequestCalendar, onSeeActivity = { tab = Tab.ACTIVITY })
                     Tab.CAN_DO -> CanDoScreen()
                     Tab.KEYRING -> KeyringScreen(app, snapshot)
-                    Tab.ACTIVITY -> ActivityScreen(app, snapshot, items)
+                    Tab.ACTIVITY -> ActivityScreen(app, snapshot, items, focusArtifact)
                     Tab.LAB -> LabScreen(app, snapshot, labLog, onShowAsk = { tab = Tab.ASK })
                 }
             }
-            TabBar(tab) { tab = it }
+            TabBar(tab) { tab = it; onFocusDone() }
         }
         ApprovalSheet(app, snapshot)
     }

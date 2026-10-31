@@ -32,6 +32,10 @@ typealias SInstant = @Serializable(with = InstantIso::class) Instant
 data class Principal(val kind: Kind, val id: String, val displayName: String) {
     enum class Kind { USER, ASSISTANT, PEER }
 
+    // Identity is kind + id. The display name is a label and can change without moving authority.
+    override fun equals(other: Any?) = other is Principal && other.kind == kind && other.id == id
+    override fun hashCode() = 31 * kind.hashCode() + id.hashCode()
+
     companion object {
         val User = Principal(Kind.USER, "user", "You")
         val Assistant = Principal(Kind.ASSISTANT, "assistant", "Your assistant")
@@ -72,5 +76,28 @@ data class Interval(val start: SInstant, val end: SInstant) {
 
     companion object {
         fun of(start: Instant, durationMinutes: Int) = Interval(start, start + durationMinutes.minutes)
+    }
+}
+
+/**
+ * Everything Deputy creates outside itself (a hold, an invite, later an email or a message) gets
+ * an artifact id before the adapter runs, and a link back to its entry in Activity. Where only
+ * the user will see the artifact, the link is written into it; where others will see it (an
+ * invite's description goes to every attendee), it is kept out (docs/decisions.md D19).
+ */
+object Artifacts {
+    const val SCHEME = "deputy"
+    const val HOST = "activity"
+    /** Every note Deputy writes into an artifact starts with this; adapters use it to recognise their own. */
+    const val NOTE_PREFIX = "Placed by Deputy."
+
+    fun link(artifactId: String) = "$SCHEME://$HOST/$artifactId"
+    fun note(artifactId: String) = "$NOTE_PREFIX See it, or undo it, in Deputy: ${link(artifactId)}"
+
+    /** The artifact id in a Deputy link, or null if it isn't one. */
+    fun parse(link: String): String? {
+        val prefix = "$SCHEME://$HOST/"
+        val id = link.removePrefix(prefix).takeIf { link.startsWith(prefix) } ?: return null
+        return id.takeIf { it.isNotEmpty() && it.length <= 64 && it.all { c -> c.isLetterOrDigit() || c == '_' } }
     }
 }

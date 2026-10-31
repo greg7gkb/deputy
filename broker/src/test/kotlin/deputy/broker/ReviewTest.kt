@@ -170,7 +170,7 @@ class ReviewTest {
     // ---- F9: a hung adapter holds the broker lock, so the kill switch cannot run -----------
 
     private class HangingCalendar(val inner: FakeCalendar = FakeCalendar()) : CalendarAdapter by inner {
-        override suspend fun placeHold(slot: Interval, title: String): String = awaitCancellation()
+        override suspend fun placeHold(slot: Interval, title: String, note: String): String = awaitCancellation()
     }
 
     @Test fun `F9 the kill switch is not blocked by an in-flight adapter call`() = runTest {

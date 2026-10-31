@@ -19,6 +19,7 @@ class FakeCalendar : CalendarAdapter {
     override val source = "fake calendar"
     val busy = mutableListOf<Interval>()
     val events = linkedMapOf<String, Pair<Interval, String>>()
+    val notes = mutableMapOf<String, String>()
     var reads = 0
     var failNext = false
     private var nextId = 100
@@ -28,9 +29,9 @@ class FakeCalendar : CalendarAdapter {
         return (busy + events.values.map { it.first }).filter { it.overlaps(window) }
     }
 
-    override suspend fun placeHold(slot: Interval, title: String): String {
+    override suspend fun placeHold(slot: Interval, title: String, note: String): String {
         if (failNext) { failNext = false; error("calendar unavailable") }
-        return (nextId++).toString().also { events[it] = slot to title }
+        return (nextId++).toString().also { events[it] = slot to title; notes[it] = note }
     }
 
     override suspend fun releaseHold(adapterRef: String) {

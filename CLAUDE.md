@@ -1,116 +1,47 @@
-# Deputy
+@README.md
 
-Deputy is a personal, build-led exploration of how phone operating systems evolve
-for AI agents. Concretely, it is a trust-and-authority layer that sits between an
-AI assistant and the apps and services on an Android phone. The assistant proposes
-actions; Deputy, which is plain deterministic code, decides what actually happens,
-using scoped, revocable, expiring capability tokens.
+# Working on Deputy
 
-Status: Phase 0, hobby prototype, single user. Public repo from the first commit.
+The README above is the project description: architecture, hard rules, risk tiers and
+build order. Treat its hard rules as non-negotiable. This file adds how to work in the repo.
 
-## Core principle
+## Where things are decided
 
-Models propose, code disposes. Every action an agent takes flows through the
-broker, which is the only component that holds real credentials and the only one
-that can act. The broker's enforcement is deterministic code, never an LLM.
+- `docs/design.md`: the reasoning behind the project. Read the relevant section when a
+  design question comes up, not every session.
+- `docs/decisions.md`: implementation decisions (D1, D2, ...) and the assumptions made to
+  unblock work. Record new ones there; code comments cite them by number.
+- `docs/log.md`: the running build log, newest first. Keep it current: what was built,
+  what broke, what it taught. That log plus the working prototype is the actual
+  deliverable of this project, more than the code itself.
 
-## Architecture
+## Code rules
 
-- **Broker**: holds credentials, mints and checks capability tokens, enforces flow
-  policy, writes the audit log, owns the kill switch. This is the reference monitor
-  and the heart of the system.
-- **Capability tokens**: scoped, budgeted, time-boxed, revocable, and
-  non-delegable by default. Each one renders as a single human-readable sentence in
-  the Keyring.
-- **Keyring**: the product's main surface. Lists active authority in plain words,
-  offers one-tap revoke, and a revoke-all kill switch.
-- **Activity**: append-only log of what was done, refused, or asked about, written
-  for a person to read. Inbound questions (Phase 3) are logged here too: who asked,
-  what, and what was answered.
-- **Fact store**: the typed record of what Deputy knows about the user, written only
-  by the broker. Every fact carries a provenance label and a freshness time. The
-  four labels, in descending trust: *attested* (a third party signed it: an mDL,
-  a bank's KYC result), *observed* (read from a service through an adapter),
-  *inferred* (a model derived it), *asserted* (the user said so). Adapters write
-  into the fact store from Phase 0 rather than caching privately; it is also the
-  only thing the inbound surface answers from.
-- **Dual-model split (CaMeL-style)**: a cloud planner that sees only the user's
-  request plus the capability catalog and never touches untrusted content; an
-  on-device model that reads untrusted content (email, texts, notifications) into
-  typed slots and holds no authority. The broker sits between them.
-- **Adapters**: how a capability reaches the world, behind a typed function.
-  Fragility is quarantined inside the adapter; the agent only ever sees the typed
-  function. Six tiers, best to worst:
-  1. *On-device API* (CalendarContract, NotificationListener, MediaStore).
-  2. *Cloud API* (Gmail, Google Calendar, a card issuer).
-  3. *Code trigger*: Deputy fires the action itself without UI (an intent with
-     extras, an App Action, a deep link that completes the action).
-  4. *Handed affordance*: Deputy prepares the action and the user's tap finishes
-     it (a prefilled deep link, an embedded widget, a share sheet).
-  5. *UI driving*: accessibility automation pushing buttons and reading pixels.
-  6. *Go to the app*: the user does it themselves. Deputy has offered no utility.
-  Tier 4 ranks above tier 5 on purpose: it is sturdier and keeps a human gesture.
-  For physical and permanent actions tier 4 is a ceiling set by policy, not by
-  what the app happens to expose.
-- **Inbound responder**: the component that answers inbound questions (Phase 3).
-  Until public reachability is tackled as its own problem, everything is proxied
-  through the phone app and any cloud piece is reachable only by Deputy's own app.
+- `broker/` stays pure Kotlin/JVM: no Android imports, stdlib and kotlinx only, and no
+  `java.*` types in its public API (so it can go multiplatform later). Everything that
+  enforces lives there, and so does all user-facing wording (`broker/present`).
+- Broker state is event-sourced (D2): change state only by appending an `Event` to the
+  journal. Never add mutable broker state the journal can't reproduce.
+- New capabilities are new `Action` and `Permit` types with checks in `Policy`; there is no
+  free-text or catch-all action (D7).
+- Adapters read the minimum. The calendar adapter must never query titles, descriptions,
+  locations or attendees (D9).
+- Run `./gradlew :broker:test` after any broker change; add a test for every new rule.
 
-## Hard rules (do not violate)
+## Testing on the emulator
 
-- **No headless actuation of a physical lock.** The garage / Door adapter embeds
-  the real unlock button (via AppWidgetHost) and requires a genuine human tap. Do
-  not extract or cache a PendingIntent, synthesize a touch, or otherwise fire a
-  physical unlock with no human gesture. Physical, irreversible actions keep a
-  human in the loop by design. This is the project's own thesis applied to itself.
-- **The broker is deterministic code.** Never put an LLM in the enforcement path;
-  that rebuilds the vulnerability the project exists to contain.
-- **Models never hold raw credentials.** The planner never sees untrusted content
-  or secrets.
-- **Secrets carry a label and never leak.** One-time codes and the like may never
-  flow into an outbound message or up to the cloud planner.
-- **Interoperability work stays within the user's own authorized access.** No
-  hunting for auth bypasses, and nothing that would function as an exploit for
-  someone without legitimate access.
-- **Inbound questions are answered by the broker, from the fact store, from a fixed
-  typed query vocabulary.** The planner never sees or answers an inbound question;
-  models only work on the ingest side. Open-ended natural-language questions about
-  the user are not a supported input.
+The debug build has an adb-only driver (guarded by the `DUMP` permission):
 
-## Action risk tiers
+```
+adb shell am broadcast -a io.github.greg7gkb.deputy.DRIVE -n io.github.greg7gkb.deputy/.DebugDriver --es cmd <cmd>
+```
 
-Every capability declares one: reversible (just does it), compensable (undoable
-with effort), or permanent (asks first). Permanent and costly actions get an
-explicit confirmation; reversible ones run freely. Minimise how often Deputy asks,
-or people tap "yes" on reflex and the protection evaporates.
+Commands are listed in `app/src/debug/.../DebugDriver.kt`; results go to logcat under
+`DeputyDriver`. It deliberately cannot approve, decline or revoke: those need a real tap
+(use `adb shell input tap` against a `uiautomator dump`).
 
-## Build order
+## Commits
 
-- **Phase 0**: broker (token store, policy check, audit log) + Keyring + kill
-  switch + one real adapter, end to end. The adapter is the on-device calendar
-  (tier 1): read free/busy into the fact store, place and remove holds. Reasoning
-  in `docs/design.md` section 11.
-- **Phase 1**: a second on-device adapter (notification triage, with secret
-  labels on one-time codes), a cloud-API adapter (Gmail), and the Door garage
-  adapter (tier 4, hosted widget), then the dual-model split once there is
-  something to plan over.
-- **Phase 2**: the capability-catalog pipeline (scan, label, verify, promote) and
-  payment-prefill adapters plus capped-card authority.
-- **Phase 3**: the inbound surface. Other parties (services, other people's
-  Deputies) ask typed questions about the user; the broker answers deterministically
-  from the fact store under inbound grants that appear in the Keyring like any other
-  authority. First capability: free/busy. See `docs/design.md` section 10.
-
-See `docs/design.md` for the reasoning behind all of this, `docs/log.md` for the
-running build log, and `docs/ux/` for the screen designs.
-
-Empirical scans of the phone's installed apps (the capability scanner, the APK
-composition analysis, and their outputs) live outside this repo in
-`~/code/deputy-scan/`, because they hold pulled third-party APKs and dumps.
-
-## Conventions
-
-- Language and build system: TBD, fill in at the first real commit.
-- Keep the build log in `docs/log.md` current: what was built, what broke, what it
-  taught. That log plus the working prototype is the actual deliverable of this
-  project, more than the code itself.
+- The repo is public. Never put Claude session links in commit messages or tracked
+  files; record them in the gitignored `sessions.local.md`.
+- Commits use the GitHub noreply address set in the repo's git config.

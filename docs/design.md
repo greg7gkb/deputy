@@ -49,6 +49,15 @@ to design first and best. The chat box is almost incidental.
 
 ## 4. Architecture decisions
 
+The original system diagram (`agent_os_prototype_system_flow.svg` and `.png`,
+2026-10-28) is kept as drawn. `architecture.svg` is the current version, with the
+same layout and four changes: the garage adapter is the hosted Door widget, opened
+by your tap, rather than a "Latch UI driver" (the hard rule); the calendar sits with
+the on-device APIs, since it is the Phase 0 adapter and tier 1; the broker gains the
+hash-chained journal and the fact store; and a note that inbound questions arrive at
+the broker too (section 10). The agent runtime box is, in Phase 0, a scripted
+planner that holds only an `AgentPort` (`decisions.md` D4, D5).
+
 - **Broker as sole credential holder.** Because the Android sandbox already
   guarantees no other app can read the broker's store, "only the broker holds keys
   and everything routes through it" is real, discretionary enforcement without any

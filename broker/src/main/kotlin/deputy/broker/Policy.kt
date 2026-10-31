@@ -120,7 +120,8 @@ object Policy {
         request.permits.any { it is Permit.InboundFreeBusy } && requester.kind != Principal.Kind.USER ->
             "only you can let someone else ask about you"
         request.ttlMinutes == null && requester.kind != Principal.Kind.USER -> "an assistant's key must expire"
-        (request.ttlMinutes ?: 0) > MAX_REQUEST_TTL_MINUTES -> "a key may last at most 7 days"
+        (request.ttlMinutes ?: 0) > MAX_REQUEST_TTL_MINUTES && requester.kind != Principal.Kind.USER ->
+            "an assistant's key may last at most 7 days"
         (request.ttlMinutes ?: 1) <= 0 -> "the expiry is not reasonable"
         !isCleanText(request.title, MAX_LABEL) -> "the title is too long or has line breaks"
         request.purpose != null && !isCleanText(request.purpose, MAX_TITLE) -> "the purpose is too long or has line breaks"

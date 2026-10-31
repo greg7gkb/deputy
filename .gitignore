@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+out/
+*.apk
+*.dex
+*.class
+
+# Decompiler / scan working dirs (keep these off the repo; they hold third-party code)
+deputy-scan/
+analysis/
+apks/
+
+# Local secrets and config
+*.local
+.env
+local.properties
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.iml

@@ -26,29 +26,22 @@ README.md          This file
 docs/
   design.md        Full reasoning: thesis, concept stack, strategy, findings
   log.md           Running build log (what was built, what broke, what it taught)
-tools/
-  deputy_scan.sh   Read-only Android capability scanner (intent filters,
-                   deep links, App Actions) used to seed the adapter catalog
+  ux/screens.html  Screen designs, rev 2 (open in a browser)
+  Deputy app screens - UX protos.pdf
+                   Original screen designs, 2026-10-28
 broker/            (Phase 0) the reference monitor: tokens, policy, audit, kill switch
 keyring/           (Phase 0) the permission-ledger UI
-adapters/          (Phase 1+) one typed module per capability
+adapters/          (Phase 0+) one typed module per capability; calendar first
 ```
+
+The empirical scans of the phone's installed apps (capability scanner, APK
+composition analysis, and their outputs) live in a sibling folder,
+`~/code/deputy-scan/`, outside this repo: they hold pulled third-party APKs and
+package dumps that do not belong in a public repo. Findings are summarised in
+`docs/design.md` section 8.
 
 ## Status
 
-Phase 0, single-user prototype. See `CLAUDE.md` for the build order and the hard
-rules (notably: no headless actuation of a physical lock).
-
-## Suggested first commit
-
-```
-git init
-git add .
-git commit -m "Deputy: project context, design, and capability scanner
-
-Seed the repo with the durable context (CLAUDE.md), the full design
-reasoning (docs/design.md), and the read-only capability scanner.
-No runtime code yet; Phase 0 (broker + Keyring + kill switch) is next.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
-```
+Phase 0, single-user prototype, no runtime code yet. The first adapter is the
+on-device calendar. See `CLAUDE.md` for the build order and the hard rules
+(notably: no headless actuation of a physical lock).

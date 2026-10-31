@@ -39,9 +39,22 @@ that can act. The broker's enforcement is deterministic code, never an LLM.
   on-device model that reads untrusted content (email, texts, notifications) into
   typed slots and holds no authority. The broker sits between them.
 - **Adapters**: how a capability reaches the world, behind a typed function.
-  Tiered best to worst: on-device API, cloud API, prefill deep link, UI driving
-  (pixels). Fragility is quarantined inside the adapter; the agent only ever sees
-  the typed function.
+  Fragility is quarantined inside the adapter; the agent only ever sees the typed
+  function. Six tiers, best to worst:
+  1. *On-device API* (CalendarContract, NotificationListener, MediaStore).
+  2. *Cloud API* (Gmail, Google Calendar, a card issuer).
+  3. *Code trigger*: Deputy fires the action itself without UI (an intent with
+     extras, an App Action, a deep link that completes the action).
+  4. *Handed affordance*: Deputy prepares the action and the user's tap finishes
+     it (a prefilled deep link, an embedded widget, a share sheet).
+  5. *UI driving*: accessibility automation pushing buttons and reading pixels.
+  6. *Go to the app*: the user does it themselves. Deputy has offered no utility.
+  Tier 4 ranks above tier 5 on purpose: it is sturdier and keeps a human gesture.
+  For physical and permanent actions tier 4 is a ceiling set by policy, not by
+  what the app happens to expose.
+- **Inbound responder**: the component that answers inbound questions (Phase 3).
+  Until public reachability is tackled as its own problem, everything is proxied
+  through the phone app and any cloud piece is reachable only by Deputy's own app.
 
 ## Hard rules (do not violate)
 
@@ -74,10 +87,13 @@ or people tap "yes" on reflex and the protection evaporates.
 ## Build order
 
 - **Phase 0**: broker (token store, policy check, audit log) + Keyring + kill
-  switch + one real adapter, end to end.
-- **Phase 1**: a second on-device adapter (notification triage) and a cloud-API
-  adapter (calendar or Gmail), then the dual-model split once there is something to
-  plan over.
+  switch + one real adapter, end to end. The adapter is the on-device calendar
+  (tier 1): read free/busy into the fact store, place and remove holds. Reasoning
+  in `docs/design.md` section 11.
+- **Phase 1**: a second on-device adapter (notification triage, with secret
+  labels on one-time codes), a cloud-API adapter (Gmail), and the Door garage
+  adapter (tier 4, hosted widget), then the dual-model split once there is
+  something to plan over.
 - **Phase 2**: the capability-catalog pipeline (scan, label, verify, promote) and
   payment-prefill adapters plus capped-card authority.
 - **Phase 3**: the inbound surface. Other parties (services, other people's
@@ -85,8 +101,12 @@ or people tap "yes" on reflex and the protection evaporates.
   from the fact store under inbound grants that appear in the Keyring like any other
   authority. First capability: free/busy. See `docs/design.md` section 10.
 
-See `docs/design.md` for the reasoning behind all of this, and `docs/log.md` for
-the running build log.
+See `docs/design.md` for the reasoning behind all of this, `docs/log.md` for the
+running build log, and `docs/ux/` for the screen designs.
+
+Empirical scans of the phone's installed apps (the capability scanner, the APK
+composition analysis, and their outputs) live outside this repo in
+`~/code/deputy-scan/`, because they hold pulled third-party APKs and dumps.
 
 ## Conventions
 

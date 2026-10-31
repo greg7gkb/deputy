@@ -65,6 +65,16 @@ to design first and best. The chat box is almost incidental.
   The agent never knows or cares whether the adapter calls a clean API or drives a
   UI. When an app later exposes a real API, you swap the adapter and nothing above
   it changes.
+- **Six adapter tiers, best to worst** (listed in `CLAUDE.md`): on-device API,
+  cloud API, code trigger, handed affordance, UI driving, go to the app. The
+  bottom rung is the definition of failure: if the user has to open the app and
+  do it themselves, Deputy offered nothing. A handed affordance (tier 4: a
+  prefilled deep link, an embedded widget) ranks above UI driving (tier 5)
+  because it does not break when the app ships a redesign and it leaves the last
+  gesture with the person. The working stance is optimistic: Google exposes a lot
+  through on-device and cloud APIs (calendar, contacts, mail, files,
+  notifications), so a useful product can probably live mostly in tiers 1 and 2,
+  with third-party apps reached through tiers 3 and 4.
 
 ## 5. The scenarios (what the UX has to prove)
 
@@ -127,11 +137,13 @@ not.
 
 ## 8. Empirical findings from the build (the non-circular part)
 
-- **Only the OS exposes clean on-device APIs.** A scan of ~104 installed
-  third-party apps found that every usable on-device capability belonged to Android
-  itself (notifications, files, calendar). Not one third-party app in the set
-  exposed an on-device API we could call. Every time a third-party app was needed,
-  the result was a deep link, a prefill, or UI driving. This reframes the whole
+- **Only the OS exposes clean on-device APIs.** A scan of the 119 third-party
+  packages on the phone (104 of which declare any deep link or intent filter at
+  all; scanner and output in `~/code/deputy-scan/`) found that every usable
+  on-device capability belonged to Android itself (notifications, files,
+  calendar). Not one third-party app in the set exposed an on-device API we could
+  call. Every time a third-party app was needed, the result was a deep link, a
+  prefill, or UI driving. This reframes the whole
   question as a supply-side one: developer willingness, not agent capability, is the
   constraint.
 - **The platform reserves "fire an action" to a real human gesture.** Hosting
@@ -240,11 +252,19 @@ a dozen other states), Solid pods, and Plaid as a mediated query layer over bank
   question and never composes an answer. Models work only on the ingest side: the
   quarantined on-device model turns untrusted content into typed facts with an
   *inferred* or *observed* label, exactly as it does for notification triage.
-- **Phone as root of trust, cloud as responder.** The inbound surface has to be
-  reachable when the phone is asleep, which argues for an always-on private cloud
-  component. That component must be the most exposed piece of the system and must
-  not hold root keys: the phone mints attenuated tokens, the cloud responder holds
-  those plus a cache of answerable facts. The broker pattern, one hop out.
+- **Phone as root of trust; public reachability deferred.** An inbound surface
+  that answers while the phone is asleep argues for an always-on cloud responder,
+  and that responder would be the most exposed piece of the system: an online
+  cache of answerable facts is exactly what an attacker wants. So the first
+  version does not build it. Everything is proxied through the phone app: a
+  question arrives (from a paired Deputy, via push), wakes the phone, and the
+  phone's broker answers. Any cloud piece is a relay reachable only by Deputy's
+  own app, holding no facts and no keys. An asleep phone means a late answer,
+  which is acceptable for scheduling between friends. Public, always-on
+  answering for services is a separate problem to take on later; when it comes,
+  the shape is the broker pattern one hop out (the phone mints attenuated tokens,
+  the responder holds those plus the narrowest cache that serves them, never
+  root keys), and it gets its own threat model first.
 - **Priming the store with the adapter tiers already in the design.** On-device
   APIs, cloud APIs, notification and accessibility reads, and reading the user's
   own accounts with the user's own credentials. The Plaid precedent is that
@@ -280,3 +300,59 @@ askers. Manageable at design time; not a solved problem.
   is a small step from something people already do.
 - A name. "Oracle" is the working term and collides with a database company. Pick
   something in the Deputy / Keyring / Activity register before Phase 3 starts.
+
+## 11. Phase 0: why the calendar first
+
+The garage was the original first adapter and is a poor first demo. The hard rule
+caps it at tier 4 (embed the real button, a human taps), so the loop it proves is
+"Deputy put a button in front of you," not "Deputy acted under a token." The
+on-device calendar is the better first adapter:
+
+- **It is tier 1.** `CalendarContract` is a real on-device API that Google
+  Calendar already syncs into. Phase 0 tests the path the whole project hopes to
+  live on, with no fragility to debug that is not ours.
+- **Its tokens mean something.** "Can see when you are busy, not what" is a scope
+  the broker can enforce at the field level (intervals out, titles never), which
+  is the sentence the Keyring was designed around.
+- **It spans the risk tiers.** Reading free/busy is reversible, placing a
+  tentative hold is reversible (undo deletes it), accepting an invite is
+  compensable, and deleting events is permanent and asks first. One adapter
+  exercises the whole confirmation policy.
+- **It seeds the fact store.** Busy intervals become *observed* facts with a
+  freshness time, which is the one Phase 0 change the inbound design asked for.
+- **It is Phase 3's first answer.** Free/busy is the first inbound capability.
+  Building it outbound first tests, early and cheaply, whether the inbound side
+  really reuses the same broker.
+- **It needs no model.** The proposer in Phase 0 can be a scripted stub. The
+  broker should not care who proposes, and proving that before an LLM is attached
+  keeps "models propose, code disposes" honest.
+
+The most dramatic demo, a phishing text trying to extract one-time codes and
+failing, stays in Phase 1 with notification triage, because it needs the
+on-device model to be convincing.
+
+## 12. Screen designs
+
+`docs/Deputy app screens - UX protos.pdf` (2026-10-28) is the original set of
+fourteen screens. It predates two decisions, so `docs/ux/screens.html` revises
+the affected screens and adds the new ones:
+
+- **Garage under the hard rule.** No screen may show the assistant opening the
+  gate. Deputy surfaces the hosted Door button near home and the person taps it;
+  Activity records "you opened," not "Deputy opened." The capability list labels
+  it "Your tap," a fourth badge beside Just does it / Undoable / Asks first,
+  for actions that only a human gesture can complete.
+- **Guest passes are Door's, not Deputy's.** The PDF's "Sam gets a link, works
+  from any phone" would be Deputy firing a lock on Sam's behalf. Instead Deputy
+  prefills Door's own guest access (tier 4) and tracks it in the Keyring, the
+  same borrowed-enforcement move as the capped card: Door enforces the limits,
+  and revoking deep-links into Door to remove the key. Caveat: the scan shows
+  no guest-specific deep link in Door (only `app.door.com` `/mobile` and
+  `/console/maintenance` prefixes), so today this is closer to tier 6 than
+  tier 4. The screen shows the target, not current reality.
+- **The inbound direction.** The Keyring gains a second tab, "Who may ask," for
+  inbound grants; Activity gains inbound entries, including uniform declines;
+  and a "What Deputy knows" screen shows the fact store with provenance labels
+  and freshness.
+- **The calendar as the Phase 0 adapter**, reflected on the home screen and in
+  the Keyring.

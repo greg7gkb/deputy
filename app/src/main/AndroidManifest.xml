@@ -20,5 +20,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Tier 1: notification triage. Granted by the user in Settings (Notification access). -->
+        <service
+            android:name=".notifications.DeputyNotificationListener"
+            android:exported="true"
+            android:label="Deputy"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

@@ -8,6 +8,23 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 (late) — What a notification listener sees on Android 15
+
+- Added a bare NotificationListenerService (tier 1, the planned Phase 1 triage adapter) that
+  logs only whether content was redacted, then sent real SMS through the emulator and posted
+  notifications from the shell.
+- Result: codes are hidden from third-party listeners ("Sensitive notification content
+  hidden"), so is a phishing text that talks about codes, and so is *every* SMS from Google
+  Messages, even "Running 10 min late". Plain notifications from other apps arrive intact.
+  Details and the two readings in `design.md` section 8.
+- What it taught: the OS is already enforcing part of "secrets never leak", which is
+  encouraging for the thesis (the platform is moving the same way), but it also takes away
+  the most natural Phase 1 demo. The phishing-text scenario as mocked up can't happen through
+  a listener on Android 15, because the listener never sees the text. Phase 1 should either
+  pick the SMS route deliberately (default-SMS role, or `READ_SMS` on a sideloaded build) or
+  lead with email through the Gmail API, where nothing is redacted and Deputy's own labels and
+  flow guard have to do the work. That choice is for the next session.
+
 ## 2026-10-31 (evening) — Phase 0, end to end on an emulator
 
 **Built.** The broker (`broker/`, pure Kotlin/JVM), the Android app (`app/`), and 42 JVM

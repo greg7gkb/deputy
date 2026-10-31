@@ -120,6 +120,8 @@ object GrantTemplates {
     fun calendarForScheduling() = GrantRequest(
         title = "Calendar for scheduling",
         permits = listOf(Permit.FreeBusy(), Permit.Holds()),
+        // A use cap bounds how much of the calendar narrow queries can map out (decisions.md D18).
+        maxUses = 20,
         ttlMinutes = 2.hours.inWholeMinutes.toInt(),
     )
 

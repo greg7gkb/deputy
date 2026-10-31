@@ -93,10 +93,12 @@ object Keyring {
         return parts.joinToString(" ")
     }
 
-    private fun permitChips(p: Permit): List<String> = when (p) {
-        is Permit.FreeBusy -> listOf("free/busy only", "next ${p.maxDaysAhead} days", "${p.granularityMinutes}-min slots")
-        is Permit.Holds -> listOf("up to ${p.maxActiveHolds} holds", "≤ ${p.maxDurationMinutes / 60.0}".removeSuffix(".0") + " h each")
-        is Permit.Invites -> listOf(if (p.preapproved) "no asking" else "asks first")
+    fun permitChips(p: Permit): List<String> = when (p) {
+        is Permit.FreeBusy -> listOf("free/busy only", "next ${p.maxDaysAhead} days", "${p.earliestHour}–${p.latestHour}h",
+            "${p.granularityMinutes}-min slots", "≤ ${p.maxResults} options")
+        is Permit.Holds -> listOf("up to ${p.maxActiveHolds} holds", "≤ ${Format.duration(p.maxDurationMinutes)} each", "≤ ${p.maxDaysAhead} days out")
+        is Permit.Invites -> listOf(if (p.preapproved) "no asking" else "asks first", "≤ ${Format.duration(p.maxDurationMinutes)}") +
+            (p.allowedAttendees?.let { listOf("only ${it.joinToString()}") } ?: listOf("anyone"))
         is Permit.InboundFreeBusy -> listOf("free/busy only", days(p.weekdays), "${p.earliestHour}–${p.latestHour}h", "${p.questionsPerWeek} questions/week")
     }
 
@@ -113,9 +115,25 @@ object Keyring {
         expiresAt == null -> "ongoing"
         expiresAt <= now -> "ended"
         expiresAt - now < 1.hours -> "ends in ${(expiresAt - now).inWholeMinutes} min"
-        expiresAt - now < 1.days -> "ends in ${(expiresAt - now).inWholeHours} h"
+        expiresAt - now < 1.days -> "ends in ${((expiresAt - now).inWholeMinutes + 59) / 60} h"
         expiresAt - now < 7.days -> "ends ${Format.day(expiresAt.toLocalDateTime(zone).dayOfWeek)}"
         else -> "ends ${Format.date(expiresAt, zone)}"
+    }
+}
+
+data class FactView(val title: String, val detail: String, val provenance: String, val sensitivity: String, val freshness: String, val fresh: Boolean)
+
+object FactsView {
+    fun describe(fact: deputy.broker.Fact, now: Instant, zone: TimeZone): FactView {
+        val (title, detail) = when (val v = fact.value) {
+            is deputy.broker.FactValue.BusyIntervals -> "Busy times" to
+                "${v.busy.size} busy ${if (v.busy.size == 1) "time" else "times"}, ${Format.date(v.window.start, zone)} to ${Format.date(v.window.end, zone)}. No titles."
+            is deputy.broker.FactValue.Text -> fact.key to v.text
+            is deputy.broker.FactValue.Flag -> fact.key to if (v.value) "yes" else "no"
+        }
+        val fresh = now < fact.staleAfter
+        return FactView(title, detail, fact.provenance.name.lowercase(), fact.sensitivity.name.lowercase(),
+            "${fact.source}, read ${Format.time(fact.observedAt, zone, now)}" + if (fresh) "" else " (stale; re-read when needed)", fresh)
     }
 }
 
@@ -136,7 +154,9 @@ object Narrator {
                 is Event.GrantRevoked -> ActivityItem(entry.seq, e.at, time, "Revoked: ${grants[e.grantId]?.grant?.title ?: "a key"}",
                     "It stopped working immediately.", "by you", Tone.SYSTEM)
                 is Event.KillSwitch -> ActivityItem(entry.seq, e.at, time, "Revoked everything",
-                    "${plural(e.revoked.size, "key")} revoked, ${plural(e.cancelled.size, "pending request")} cancelled.", "kill switch", Tone.REFUSED)
+                    "${plural(e.revoked.size, "key")} revoked, ${plural(e.cancelled.size, "pending request")} cancelled.", "kill switch", Tone.SYSTEM)
+                is Event.ApprovalExpired -> ActivityItem(entry.seq, e.at, time, "Nobody answered in time",
+                    "${plural(e.requestIds.size, "request")} expired after ${deputy.broker.Broker.APPROVAL_TTL.inWholeMinutes} minutes. Nothing was done.", "expired", Tone.SYSTEM)
                 is Event.ApprovalRequested -> ActivityItem(entry.seq, e.at, time,
                     if (e.kind == ApprovalKind.MINT_GRANT) "${e.principal.displayName} asked for a key" else "Asked you first",
                     if (e.kind == ApprovalKind.MINT_GRANT) "\"${e.grantRequest?.title}\"" + (e.grantRequest?.purpose?.let { ", for: $it" } ?: "")
@@ -150,7 +170,7 @@ object Narrator {
                         else -> describe(req.action!!, zone, snapshot.now)
                     }
                     ActivityItem(entry.seq, e.at, time, if (e.approved) "You approved" else "You declined", what.replaceFirstChar { it.uppercase() },
-                        if (e.approved) "approved" else "nothing happened", if (e.approved) Tone.DONE else Tone.SYSTEM)
+                        if (e.approved) "approved" else "nothing happened", Tone.SYSTEM)
                 }
                 is Event.ActionExecuted -> narrateExecuted(entry.seq, e, time, key(e.grantId), zone, snapshot, activeHolds)
                 is Event.ActionRefused -> ActivityItem(entry.seq, e.at, time,
@@ -209,6 +229,7 @@ object Narrator {
                 "${req.principal.displayName} is asking for this key. Nothing happens until you approve it.",
                 buildList {
                     add("Can" to Keyring.sentence(preview))
+                    add("Limits" to r.permits.flatMap { Keyring.permitChips(it) }.joinToString(" · "))
                     r.purpose?.let { add("Says it's for" to it) }
                     add("Uses" to (r.maxUses?.toString() ?: "no limit"))
                     add("Expires" to (r.ttlMinutes?.let { Format.duration(it) } ?: "never"))

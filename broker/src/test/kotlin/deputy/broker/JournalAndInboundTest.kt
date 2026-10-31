@@ -45,7 +45,7 @@ class JournalTest {
         assertNotNull(reopened.broker.snapshots.value.integrityError)
         assertEquals(Refusal.INTEGRITY, assertIs<Outcome.Refused>(reopened.agent.propose(key, Action.FindFreeSlots(MONDAY, MONDAY, 30))).reason)
         assertEquals(Refusal.INTEGRITY, assertIs<Outcome.Refused>(reopened.user.revokeAll()).reason)
-        assertEquals(InboundAnswer.NOT_AVAILABLE, reopened.broker.inbound.ask(Principal.peer("z", "Z"), Question.FreeAt(at(MONDAY, 19), 60)))
+        assertEquals(InboundAnswer.NOT_AVAILABLE, reopened.broker.inboundPort(Principal.peer("z", "Z")).ask(Question.FreeAt(at(MONDAY, 19), 60)))
     }
 
     @Test fun `a deleted entry breaks the chain`() {
@@ -71,7 +71,7 @@ class InboundTest {
     private val tuesday = MONDAY.plusDays(1)
 
     private suspend fun Rig.pairZane() = assertIs<Outcome.GrantIssued>(user.mintGrant(zane, Direction.INBOUND, GrantTemplates.inboundFreeBusy())).grantId
-    private suspend fun Rig.ask(start: kotlin.time.Instant, minutes: Int = 60, who: Principal = zane) = broker.inbound.ask(who, Question.FreeAt(start, minutes))
+    private suspend fun Rig.ask(start: kotlin.time.Instant, minutes: Int = 60, who: Principal = zane) = broker.inboundPort(who).ask(Question.FreeAt(start, minutes))
     private fun Rig.lastInbound() = events().filterIsInstance<Event.InboundAsked>().last()
 
     @Test fun `no key means not available, with the reason kept for the user only`() = runTest {

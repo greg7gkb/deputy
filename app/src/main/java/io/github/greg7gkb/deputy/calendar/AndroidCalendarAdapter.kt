@@ -56,13 +56,15 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
 
     override suspend fun releaseHold(adapterRef: String) = withContext(Dispatchers.IO) {
         requirePermission(Manifest.permission.WRITE_CALENDAR)
-        // Belt and braces: only ever delete an event carrying Deputy's marker.
-        val deleted = context.contentResolver.delete(
-            ContentUris.withAppendedId(Events.CONTENT_URI, adapterRef.toLong()),
-            "${Events.DESCRIPTION} = ?",
-            arrayOf(MARKER),
-        )
-        check(deleted == 1) { "the hold was not found in the calendar" }
+        // Belt and braces: only ever delete an event carrying Deputy's marker. The provider refuses
+        // a selection on a by-id delete, so check the marker with a query first.
+        val uri = ContentUris.withAppendedId(Events.CONTENT_URI, adapterRef.toLong())
+        val ours = context.contentResolver.query(uri, arrayOf(Events.DESCRIPTION), null, null, null)?.use { c ->
+            c.moveToFirst() && c.getString(0) == MARKER
+        } ?: false
+        check(ours) { "the hold was not found in the calendar" }
+        val deleted = context.contentResolver.delete(uri, null, null)
+        check(deleted == 1) { "the calendar did not delete the hold" }
     }
 
     override suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String = withContext(Dispatchers.IO) {

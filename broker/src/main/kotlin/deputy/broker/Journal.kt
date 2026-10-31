@@ -47,6 +47,10 @@ sealed interface Event {
         val expiresAt: SInstant,
     ) : Event
 
+    /** Requests nobody answered in time. Swept so pending never grows without bound. */
+    @Serializable @SerialName("approval_expired")
+    data class ApprovalExpired(override val at: SInstant, val requestIds: List<RequestId>) : Event
+
     @Serializable @SerialName("approval_resolved")
     data class ApprovalResolved(override val at: SInstant, val requestId: RequestId, val approved: Boolean, val by: Principal) : Event
 
@@ -102,20 +106,30 @@ sealed interface Event {
 
 data class JournalEntry(val seq: Long, val prevHash: String, val hash: String, val event: Event)
 
-/** Where journal lines live. One line per entry; appends only. */
+/**
+ * Where journal lines live. One line per entry; appends only. The head (`seq<TAB>hash` of the
+ * last entry) is kept separately, so dropping entries off the end is detected, not just edits.
+ */
 interface JournalStorage {
     fun readLines(): List<String>
     fun appendLine(line: String)
+    fun readHead(): String?
+    fun writeHead(head: String)
 }
 
 class InMemoryJournalStorage : JournalStorage {
     val lines = mutableListOf<String>()
+    var head: String? = null
     override fun readLines() = lines.toList()
     override fun appendLine(line: String) { lines += line }
+    override fun readHead() = head
+    override fun writeHead(head: String) { this.head = head }
 }
 
-/** A plain text file, synced to disk on every append. */
+/** A plain text file, synced to disk on every append, with the head in a sibling file. */
 class FileJournalStorage(private val file: File) : JournalStorage {
+    private val headFile = File(file.parentFile, file.name + ".head")
+
     override fun readLines(): List<String> = if (file.exists()) file.readLines().filter { it.isNotBlank() } else emptyList()
     override fun appendLine(line: String) {
         file.parentFile?.mkdirs()
@@ -123,6 +137,12 @@ class FileJournalStorage(private val file: File) : JournalStorage {
             out.write((line + "\n").toByteArray(Charsets.UTF_8))
             out.fd.sync()
         }
+    }
+    override fun readHead(): String? = if (headFile.exists()) headFile.readText().trim() else null
+    override fun writeHead(head: String) {
+        val tmp = File(headFile.parentFile, headFile.name + ".tmp")
+        tmp.writeText(head)
+        check(tmp.renameTo(headFile)) { "could not replace ${headFile.name}" }
     }
 }
 
@@ -155,6 +175,28 @@ class Journal(private val storage: JournalStorage) {
             _entries += JournalEntry(seq, prevHash, hash, event)
             prev = hash
         }
+        if (integrityError == null) checkHead()
+    }
+
+    /**
+     * The head must name an entry we have, with the same hash. The log may run one entry past
+     * the head (a crash between the two writes); it may never stop short of it.
+     */
+    private fun checkHead() {
+        val head = storage.readHead() ?: run {
+            if (_entries.isNotEmpty()) integrityError = "the log's head record is missing"
+            return
+        }
+        val (seqText, hash) = head.split('\t').let { if (it.size == 2) it else listOf("", "") }
+        val seq = seqText.toLongOrNull()
+        val entry = seq?.let { s -> _entries.firstOrNull { it.seq == s } }
+        integrityError = when {
+            seq == null -> "the log's head record is malformed"
+            seq == 0L && hash == GENESIS -> null
+            entry == null -> "the log ends at entry ${_entries.size} but should reach entry $seq: entries were removed"
+            entry.hash != hash -> "entry $seq does not match the log's head record"
+            else -> null
+        }
     }
 
     fun append(event: Event): JournalEntry {
@@ -165,6 +207,7 @@ class Journal(private val storage: JournalStorage) {
         require('\n' !in json && '\t' !in json) { "event json must be a single line" }
         val hash = sha256("$seq|$prev|$json")
         storage.appendLine("$seq\t$prev\t$hash\t$json")
+        storage.writeHead("$seq\t$hash")
         return JournalEntry(seq, prev, hash, event).also { _entries += it }
     }
 

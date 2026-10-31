@@ -27,6 +27,7 @@ object Slots {
         now: Instant,
         zone: TimeZone,
     ): List<Interval> {
+        require(granularityMinutes > 0 && durationMinutes > 0) { "slot sizes must be positive" }
         val perDay = mutableListOf<MutableList<Interval>>()
         var day = from
         while (day <= to) {
@@ -44,7 +45,7 @@ object Slots {
 
         // Spread the options: one per day first, then further options spaced apart on the same days.
         val chosen = mutableListOf<Interval>()
-        var round = 0
+        var rounds = 0
         while (chosen.size < maxResults && perDay.any { it.isNotEmpty() }) {
             for (candidates in perDay) {
                 if (chosen.size >= maxResults) break
@@ -53,7 +54,7 @@ object Slots {
                 chosen += pick
                 candidates.removeAll { it.overlaps(pick) }
             }
-            if (++round > 48) break
+            if (++rounds > 48) break
         }
         return chosen.sortedBy { it.start }
     }

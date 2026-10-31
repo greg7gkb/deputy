@@ -44,10 +44,10 @@ class Lab(private val context: Context, private val broker: Broker) {
     }
 
     suspend fun zaneAsks(day: DayOfWeek, hour: Int, minutes: Int = 60): InboundAnswer =
-        broker.inbound.ask(zane, Question.FreeAt(next(day, hour), minutes))
+        broker.inboundPort(zane).ask(Question.FreeAt(next(day, hour), minutes))
 
     suspend fun strangerAsks(): InboundAnswer =
-        broker.inbound.ask(stranger, Question.FreeAt(next(DayOfWeek.WEDNESDAY, 19), 60))
+        broker.inboundPort(stranger).ask(Question.FreeAt(next(DayOfWeek.WEDNESDAY, 19), 60))
 
     /** Asks until the weekly budget runs out, to show the budget and the uniform decline. */
     suspend fun zaneAsksAllWeek(): List<InboundAnswer> = (0 until 8).map { i ->

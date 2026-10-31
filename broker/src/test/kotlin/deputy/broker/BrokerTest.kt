@@ -198,6 +198,6 @@ class BrokerTest {
 
         val zane = Principal.peer("zane", "Zane")
         rig.user.mintGrant(zane, Direction.INBOUND, GrantTemplates.inboundFreeBusy())
-        assertEquals(InboundAnswer.NOT_AVAILABLE, rig.broker.inbound.ask(zane, Question.FreeAt(at(MONDAY.plusDays(1), 19), 60)))
+        assertEquals(InboundAnswer.NOT_AVAILABLE, rig.broker.inboundPort(zane).ask(Question.FreeAt(at(MONDAY.plusDays(1), 19), 60)))
     }
 }

@@ -42,8 +42,12 @@ written any other way.
 - On load, a broken chain (edited, deleted or reordered entry) puts the broker in a
   **fail-closed** state: every outbound action and every user operation is refused with
   `INTEGRITY`, and every inbound question gets "not available", until a person looks. Tested.
-- Tamper *evidence*, not tamper *proof*: anyone who can rewrite the whole file can rebuild
-  the chain. Anchoring the head hash somewhere the attacker can't reach (a signed
+- A separate head record (`journal.tsv.head`: seq and hash of the last entry) is written after
+  every append, so dropping entries off the end, which a hash chain alone can't see, is
+  detected too. The log may run one entry past the head (a crash between the two writes); it
+  may never stop short of it. Added after the security review (D18, F6).
+- Tamper *evidence*, not tamper *proof*: anyone who can rewrite the whole file and its head
+  can rebuild the chain. Anchoring the head hash somewhere the attacker can't reach (a signed
   checkpoint in the Android Keystore, or a periodic hash published to a second device) is
   the upgrade path.
 - Cost: replay on startup. Trivial at Phase 0 sizes; snapshots or compaction can come later.
@@ -69,7 +73,9 @@ The broker exposes authority through three narrow interfaces:
 - `AgentPort` (bound to one principal at creation): see the catalog, list its own keys,
   request a key, propose an action, await a decision. It cannot approve, revoke or mint.
 - `UserPort`: approve, decline, mint, revoke, revoke all, undo, refresh. Only the UI holds it.
-- `InboundPort`: answer a typed question from a named asker.
+- `InboundPort` (bound to one asker at creation): answer a typed question. Whatever
+  authenticates the peer (pairing, in Phase 3) decides which port it gets; the caller can't
+  name a different asker. (Originally the asker was a parameter; changed after the review.)
 
 The principal is fixed when the host creates the port; the code holding the port cannot
 choose it. In-process, this separation is a type-level boundary, not an OS one: the planner
@@ -137,6 +143,11 @@ a planner result or an inbound answer from a `SECRET` fact. In Phase 0 nothing i
 yet (one-time codes arrive with notification triage in Phase 1); the rule exists and is
 tested now so Phase 1 extends it instead of retrofitting it.
 
+Labels are sticky: re-reading a source never lowers a fact's sensitivity (a refresh keeps the
+higher of the old label and the source's default). Lowering a label is declassification and
+will need an explicit, journaled user action. Added after the review found a refresh silently
+downgrading SECRET to PRIVATE (D18, F4).
+
 ## D12. Risk tiers decide confirmation; approval re-checks (firm)
 
 Reversible and compensable actions run if the key allows them. Permanent ones (sending an
@@ -158,8 +169,10 @@ An inbound key is an ordinary `Grant` with `direction = INBOUND` and an
 `InboundFreeBusy` permit (weekdays 18:00 to 21:00, 14 days ahead, slots up to 2 h, 6
 answered questions per rolling week). The asker gets `FREE`, `BUSY`, or `NOT_AVAILABLE`;
 every decline, for whatever reason, is the same `NOT_AVAILABLE`, and the reason is
-journaled for the user only. Declines don't spend the budget. Only the user can mint
-inbound keys; an assistant asking for one is refused. Inbound keys cannot act.
+journaled for the user only. Declines don't spend the budget. The weekly budget counts per
+asker across all their keys, and an answered question also spends a use of the key, like an
+action does. Only the user can mint inbound keys; an assistant asking for one is refused.
+Inbound keys cannot act.
 
 What it reused: `Grant`, `GrantRecord` status and expiry, revoke and kill switch, the
 journal, fact freshness, the flow guard, Keyring rendering. What it needed new: one permit
@@ -188,3 +201,51 @@ device.
 Planners speak in local dates and hours (`from`, `to`, `earliestHour`), because that is how
 people ask. Everything stored is an absolute instant. The broker's time zone is the
 phone's at startup.
+
+## D18. What the security review changed, and what it left open (firm)
+
+An independent review of `broker/` (a separate agent given the code and the threat model, not
+these notes) found 13 problems and wrote a failing test for each; they live in
+`broker/src/test/.../ReviewTest.kt` and all pass now. The fixes:
+
+- **Permit bounds** (F1, F2). Every permit field has a sane range, checked for every
+  requester including the user: slots of 15, 30 or 60 minutes; at most 60 days ahead; at
+  most 10 holds; valid hour ranges. A requested slot size of 0 or -30 previously made the
+  broker divide by zero or loop forever while holding its lock, which would have blocked the
+  kill switch. Assistants also can't ask for `preapproved` invites.
+- **The approval card shows the exact limits** (F1), as a "Limits" row of the same chips the
+  Keyring uses. Before, a much wider key read the same as the template.
+- **Holds are owned** (F3): a key can release only holds placed under a key with the same
+  holder. "May place holds, and release its own" is now true.
+- **Sticky labels** (F4), see D11. **Truncation detection** (F6), see D2.
+- **Inbound uses are spent** (F5); the inbound budget is per asker (a peer can't stack keys).
+- **Record what happened** (F8): once an adapter has changed the world, the action is
+  journaled as executed whatever fails afterwards; cache housekeeping is best effort.
+- **Adapter calls have a timeout** (F9) of 10 s and run detached from the lock holder, so a hung
+  adapter can't block the kill switch. Known gap: a *blocking* call that finishes after the
+  timeout still takes effect (a hold exists but is journaled as failed, so Deputy won't track
+  it). Real fix: idempotency keys or a reconcile pass that finds Deputy-marked events.
+- **Generic errors to the proposer** (F10): adapter exception text can contain calendar
+  contents or tokens, so the planner gets "didn't work, details in Activity"; the user's log
+  keeps the full text.
+- **Bounded growth** (F11): proposals over 4,000 characters are refused and logged by size, not
+  content; at most 5 requests per principal can wait for approval; unanswered requests are
+  swept as `ApprovalExpired`.
+- **Inbound can't throw** (F7): any failure becomes the same journaled NOT_AVAILABLE.
+- **`await` is per principal** (F12). **Clean text** (F13) rejects control, bidi-override and
+  separator characters, not just newlines.
+- **Time never runs backwards** for the broker: `now` is at least the last journaled event's
+  time, so winding the device clock back can't revive an expired key.
+
+Accepted for now, recorded so they aren't forgotten:
+
+- **Inbound timing.** A decline is faster than an answer, because the calendar is read only
+  for allowed questions. Fix when inbound goes over a network: answer on a fixed delay, or
+  answer from a fact refreshed on a schedule.
+- **Outbound information budget.** A planner with a calendar key can map busy time by asking
+  many narrow questions. The template now caps the key at 20 uses; a real per-key information
+  budget, like inbound's, is a Phase 1 item.
+- **facts.json is outside the hash chain.** It is a cache that can be re-read from the
+  source, but its labels matter (D11); once labels can be raised by the user, label changes
+  must be journaled.
+- **Same-process boundary** (D4): reflection could cross from the planner to the UserPort.

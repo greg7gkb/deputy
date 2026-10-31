@@ -8,6 +8,64 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 (evening) — Phase 0, end to end on an emulator
+
+**Built.** The broker (`broker/`, pure Kotlin/JVM), the Android app (`app/`), and 42 JVM
+tests. Running on an API 35 emulator with a local test calendar, everything below works
+through the real broker and the real CalendarContract provider (screenshots in
+`docs/screenshots/`):
+
+- The assistant asks for a "Calendar for scheduling" key; the approval card shows exactly
+  what it would allow; on approval it finds three slots, never seeing a title, and places a
+  tentative hold that appears in the calendar provider.
+- "Send Dana an invite" asks for a second key scoped to dana@example.com, finds a slot, and
+  then stops at an "Asks first" card because an invite can't be taken back. The search
+  skipped the hold placed a moment earlier, because placing it marked the cached busy times
+  stale.
+- Zane's Deputy (simulated) gets a weekday-evening inbound key: Tuesday 7 pm is busy
+  (climbing), Wednesday is free, Saturday and an unpaired stranger both get the same "not
+  available", and the weekly budget cuts off on time.
+- A deliberately tricked planner tries 8 things outside its keys (no key, a guessed key, a
+  leaked key belonging to Zane, 60 days ahead, the middle of the night, deleting an event
+  Deputy didn't create, asking for inbound authority, asking for a key that never expires).
+  8 of 8 refused, each one in Activity as "policy said no, not the AI".
+- Undo removes the hold from the calendar; "Revoke everything" kills all keys at once.
+- None of the seeded event titles appear anywhere in the journal or the fact store.
+
+**Decided.** Recorded as D1 to D18 in `docs/decisions.md`. The load-bearing ones: the broker
+is event-sourced from a hash-chained journal, so nothing changes without an audit record
+(D2); keys are broker-held records behind unguessable handles, bound to their holder (D3);
+agents, the user and inbound askers each get their own narrow port (D4); actions are a
+closed typed vocabulary, so what a planner can't express it can't do (D7); the calendar
+adapter never queries titles at all (D9). Phase 3's inbound free/busy was pulled forward in
+miniature: it needed one new permit type, one policy function and one event type, and
+reused everything else. First evidence for "same broker, other direction".
+
+**Broke, and what it taught.**
+
+- The tests caught a 7-day lifetime cap meant for the assistant's keys also applying to the
+  user's own, which would have refused "Let Zane ask" (30 days).
+- An independent security review of the broker (a separate agent, given the code, not my
+  reasoning) found 13 real problems. The worst: a key with a negative slot size would make the
+  broker spin forever while holding its lock, so the kill switch could never run; a calendar
+  refresh silently downgraded a secret label; deleting the last line of the log un-revoked a
+  key undetected; any holds key could release anyone's hold. All fixed and now tested
+  (D18). Lesson: the hard rules were enforced, but the *parameters* of authority weren't
+  bounded, and a reference monitor has to distrust the shape of what it is asked to grant,
+  not just whether it was granted.
+- On the emulator, Undo failed: Android's calendar provider refuses a `where` clause on a
+  by-id delete ("Selection not permitted"). The failure was journaled and shown in Activity
+  rather than lost, which is the system working as designed. The fix checks Deputy's marker
+  with a query, then deletes by id.
+- Installing the new build over an old journal that had no head record put the broker into
+  its fail-closed state ("the log's head record is missing") and refused everything,
+  including an approval tap. That is correct, but it means a real upgrade path needs a
+  migration step, not a silent pass.
+
+**Not done yet.** No real Google account tested (D16: on a real phone an invite through
+CalendarContract would really be sent). No language model: the planner is scripted (D5). The
+Door, notification and Gmail adapters are Phase 1.
+
 ## 2026-10-31 — Adapter ladder, Phase 0 adapter, revised screens
 
 - Adapter tiers widened from four to six: on-device API, cloud API, code

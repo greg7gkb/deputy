@@ -1,11 +1,19 @@
 package deputy.broker
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlin.coroutines.ContinuationInterceptor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
@@ -19,6 +27,7 @@ import java.security.SecureRandom
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
@@ -80,7 +89,7 @@ interface AgentPort {
     suspend fun myGrants(): List<GrantSummary>
     suspend fun requestGrant(request: GrantRequest): Outcome
     suspend fun propose(grantId: GrantId?, action: Action): Outcome
-    /** Suspends until the user resolves [requestId], then returns the final outcome. */
+    /** Suspends until the user resolves [requestId], then returns the final outcome. Own requests only. */
     suspend fun await(requestId: RequestId): Outcome
 }
 
@@ -95,9 +104,13 @@ interface UserPort {
     suspend fun refreshFacts(): Outcome
 }
 
-/** Other parties asking typed questions. Answers come only from the fact store. */
+/**
+ * One other party asking typed questions. Bound to its asker by the host, like an AgentPort:
+ * whatever authenticates the peer (pairing, in Phase 3) decides which port it gets.
+ */
 interface InboundPort {
-    suspend fun ask(asker: Principal, question: Question): InboundAnswer
+    val asker: Principal
+    suspend fun ask(question: Question): InboundAnswer
 }
 
 /** Everything the UI shows, as of [now]. */
@@ -118,8 +131,10 @@ data class BrokerState(
     val grants: Map<GrantId, GrantRecord> = emptyMap(),
     val pending: Map<RequestId, Event.ApprovalRequested> = emptyMap(),
     val holds: Map<HoldId, HoldRecord> = emptyMap(),
-    val inboundAnswered: List<Pair<GrantId, Instant>> = emptyList(),
+    /** (asker id, when) for every answered inbound question; the weekly budget counts these. */
+    val inboundAnswered: List<Pair<String, Instant>> = emptyList(),
     val undone: Set<Long> = emptySet(),
+    val lastEventAt: Instant? = null,
 ) {
     fun apply(entry: JournalEntry): BrokerState = when (val e = entry.event) {
         is Event.GrantMinted -> copy(grants = grants + (e.grant.id to GrantRecord(e.grant)))
@@ -127,11 +142,9 @@ data class BrokerState(
         is Event.KillSwitch -> copy(grants = grants.revoke(e.revoked, e.at), pending = pending - e.cancelled.toSet())
         is Event.ApprovalRequested -> copy(pending = pending + (e.requestId to e))
         is Event.ApprovalResolved -> copy(pending = pending - e.requestId)
+        is Event.ApprovalExpired -> copy(pending = pending - e.requestIds.toSet())
         is Event.ActionExecuted -> {
-            var s = this
-            if (e.grantId != null) {
-                s.grants[e.grantId]?.let { s = s.copy(grants = s.grants + (e.grantId to it.copy(usesConsumed = it.usesConsumed + 1))) }
-            }
+            var s = spend(e.grantId)
             when (val r = e.result) {
                 is ActionResult.HoldPlaced -> s = s.copy(holds = s.holds + (r.holdId to HoldRecord(r.holdId, r.slot, e.adapterRef.orEmpty(), e.grantId)))
                 is ActionResult.HoldReleased -> s = s.copy(holds = s.holds - r.holdId)
@@ -140,9 +153,17 @@ data class BrokerState(
             if (e.undoOf != null) s = s.copy(undone = s.undone + e.undoOf)
             s
         }
+        // An answered question spends a use of the key, like an action does.
         is Event.InboundAsked ->
-            if (e.answer != InboundAnswer.NOT_AVAILABLE && e.grantId != null) copy(inboundAnswered = inboundAnswered + (e.grantId to e.at)) else this
+            if (e.answer != InboundAnswer.NOT_AVAILABLE && e.grantId != null) {
+                spend(e.grantId).copy(inboundAnswered = inboundAnswered + (e.asker.id to e.at))
+            } else this
         is Event.ActionRefused, is Event.ActionFailed, is Event.FactsRefreshed -> this
+    }.copy(lastEventAt = maxOf(lastEventAt ?: entry.event.at, entry.event.at))
+
+    private fun spend(grantId: GrantId?): BrokerState {
+        val record = grantId?.let { grants[it] } ?: return this
+        return copy(grants = grants + (grantId to record.copy(usesConsumed = record.usesConsumed + 1)))
     }
 
     private fun Map<GrantId, GrantRecord>.revoke(ids: List<GrantId>, at: Instant) =
@@ -164,16 +185,22 @@ class Broker(
     private val mutex = Mutex()
     private val journal = Journal(journalStorage)
     private var state = journal.entries.fold(BrokerState()) { s, e -> s.apply(e) }
-    private val waiters = mutableMapOf<RequestId, CompletableDeferred<Outcome>>()
+    private val waiters = mutableMapOf<RequestId, Pair<Principal, CompletableDeferred<Outcome>>>()
     private val _snapshot = MutableStateFlow(snapshot())
     val snapshots: StateFlow<BrokerSnapshot> = _snapshot.asStateFlow()
 
-    val user: UserPort = UserPortImpl()
-    val inbound: InboundPort = InboundPortImpl()
-    fun agentPort(principal: Principal): AgentPort = AgentPortImpl(principal)
+    /** Adapter calls run here, so a hung adapter can be abandoned and never holds the lock (F9). */
+    private val adapterScope = CoroutineScope(SupervisorJob())
 
-    /** Re-publish the snapshot so time-based states (expiry) update in the UI. */
-    fun tick() { _snapshot.value = snapshot() }
+    val user: UserPort = UserPortImpl()
+    fun agentPort(principal: Principal): AgentPort = AgentPortImpl(principal)
+    fun inboundPort(asker: Principal): InboundPort = InboundPortImpl(asker)
+
+    /** Expire stale approval requests and re-publish, so time-based states update in the UI. */
+    suspend fun tick() = mutex.withLock {
+        if (journal.integrityError == null) sweepExpired()
+        _snapshot.value = snapshot()
+    }
 
     // ---- agent side -------------------------------------------------------------------------
 
@@ -183,7 +210,7 @@ class Broker(
         override fun catalog() = Capabilities.catalog.filter { it.direction == Direction.OUTBOUND }
 
         override suspend fun myGrants(): List<GrantSummary> = mutex.withLock {
-            val now = clock.now()
+            val now = now()
             state.grants.values.filter { it.grant.holder == principal }.map {
                 GrantSummary(it.grant.id, it.grant.title, it.grant.permits.flatMap { p -> p.capabilities }.distinct(),
                     it.status(now), it.usesLeft, it.grant.expiresAt)
@@ -192,8 +219,14 @@ class Broker(
 
         override suspend fun requestGrant(request: GrantRequest): Outcome = mutex.withLock {
             failClosed()?.let { return it }
+            sweepExpired()
+            val now = now()
+            oversized(Journal.JSON.encodeToString(GrantRequest.serializer(), request))?.let { detail ->
+                record(Event.ActionRefused(now, principal, null, null, Refusal.OUT_OF_SCOPE, detail))
+                return Outcome.Refused(Refusal.OUT_OF_SCOPE, detail)
+            }
             Policy.validateGrantRequest(principal, request)?.let { detail ->
-                record(Event.ActionRefused(clock.now(), principal, null, null, Refusal.OUT_OF_SCOPE, "key request refused: $detail"))
+                record(Event.ActionRefused(now, principal, null, null, Refusal.OUT_OF_SCOPE, "key request refused: $detail"))
                 return Outcome.Refused(Refusal.OUT_OF_SCOPE, detail)
             }
             requestApproval(principal, ApprovalKind.MINT_GRANT, grantRequest = request)
@@ -201,9 +234,15 @@ class Broker(
 
         override suspend fun propose(grantId: GrantId?, action: Action): Outcome = mutex.withLock {
             failClosed()?.let { return it }
-            val now = clock.now()
+            sweepExpired()
+            val now = now()
+            // A proposal too large to be legitimate is logged by size, not content (F11).
+            oversized(Journal.JSON.encodeToString(Action.serializer(), action))?.let { detail ->
+                record(Event.ActionRefused(now, principal, grantId, null, Refusal.OUT_OF_SCOPE, detail))
+                return Outcome.Refused(Refusal.OUT_OF_SCOPE, detail)
+            }
             val record = grantId?.let { state.grants[it] }
-            when (val verdict = Policy.authorize(principal, record, action, context(now))) {
+            when (val verdict = Policy.authorize(principal, record, action, context(now, principal))) {
                 is Verdict.Deny -> {
                     record(Event.ActionRefused(now, principal, grantId, action, verdict.reason, verdict.detail))
                     Outcome.Refused(verdict.reason, verdict.detail)
@@ -215,8 +254,8 @@ class Broker(
         }
 
         override suspend fun await(requestId: RequestId): Outcome {
-            val waiter = mutex.withLock { waiters[requestId] }
-                ?: return Outcome.Refused(Refusal.NOT_PENDING, "nothing is waiting on that request")
+            val waiter = mutex.withLock { waiters[requestId]?.takeIf { it.first == principal }?.second }
+                ?: return Outcome.Refused(Refusal.NOT_PENDING, "nothing of yours is waiting on that request")
             return waiter.await()
         }
     }
@@ -228,11 +267,25 @@ class Broker(
         action: Action? = null,
         grantRequest: GrantRequest? = null,
     ): Outcome {
-        val now = clock.now()
+        val now = now()
+        if (state.pending.values.count { it.principal == principal } >= MAX_PENDING_PER_PRINCIPAL) {
+            val detail = "$MAX_PENDING_PER_PRINCIPAL requests are already waiting for you"
+            record(Event.ActionRefused(now, principal, grantId, action, Refusal.OUT_OF_SCOPE, detail))
+            return Outcome.Refused(Refusal.OUT_OF_SCOPE, detail)
+        }
         val id = RequestId(newId("r"))
         record(Event.ApprovalRequested(now, id, principal, kind, grantId, action, grantRequest, now + APPROVAL_TTL))
-        waiters[id] = CompletableDeferred()
+        waiters[id] = principal to CompletableDeferred()
         return Outcome.AwaitingUser(id, kind)
+    }
+
+    /** Journal the expiry of requests nobody answered in time. Caller holds the lock. */
+    private fun sweepExpired() {
+        val now = now()
+        val expired = state.pending.values.filter { now >= it.expiresAt }.map { it.requestId }
+        if (expired.isEmpty()) return
+        record(Event.ApprovalExpired(now, expired))
+        expired.forEach { waiters.remove(it)?.second?.complete(Outcome.Refused(Refusal.NOT_PENDING, "the request expired")) }
     }
 
     // ---- user side --------------------------------------------------------------------------
@@ -240,17 +293,17 @@ class Broker(
     private inner class UserPortImpl : UserPort {
         override suspend fun approve(requestId: RequestId): Outcome = mutex.withLock {
             failClosed()?.let { return it }
-            val now = clock.now()
+            sweepExpired()
+            val now = now()
             val pending = state.pending[requestId] ?: return Outcome.Refused(Refusal.NOT_PENDING, "nothing is waiting on that request")
-            record(Event.ApprovalResolved(now, requestId, approved = now < pending.expiresAt, by = Principal.User))
-            val outcome = if (now >= pending.expiresAt) {
-                Outcome.Refused(Refusal.NOT_PENDING, "the request expired before it was approved")
-            } else when (pending.kind) {
+            record(Event.ApprovalResolved(now, requestId, approved = true, by = Principal.User))
+            val outcome = when (pending.kind) {
                 ApprovalKind.MINT_GRANT -> mint(pending.principal, Direction.OUTBOUND, pending.grantRequest!!, requestId)
                 ApprovalKind.CONFIRM_PERMANENT -> {
                     // Check again: the key may have been revoked or used up while the person decided.
                     val action = pending.action!!
-                    when (val verdict = Policy.authorize(pending.principal, pending.grantId?.let { state.grants[it] }, action, context(now))) {
+                    val record = pending.grantId?.let { state.grants[it] }
+                    when (val verdict = Policy.authorize(pending.principal, record, action, context(now, pending.principal))) {
                         is Verdict.Deny -> {
                             record(Event.ActionRefused(now, pending.principal, pending.grantId, action, verdict.reason, verdict.detail))
                             Outcome.Refused(verdict.reason, verdict.detail)
@@ -259,16 +312,17 @@ class Broker(
                     }
                 }
             }
-            waiters.remove(requestId)?.complete(outcome)
+            waiters.remove(requestId)?.second?.complete(outcome)
             outcome
         }
 
         override suspend fun decline(requestId: RequestId): Outcome = mutex.withLock {
             failClosed()?.let { return it }
+            sweepExpired()
             if (requestId !in state.pending) return Outcome.Refused(Refusal.NOT_PENDING, "nothing is waiting on that request")
-            record(Event.ApprovalResolved(clock.now(), requestId, approved = false, by = Principal.User))
+            record(Event.ApprovalResolved(now(), requestId, approved = false, by = Principal.User))
             val outcome = Outcome.Refused(Refusal.DECLINED_BY_USER, "you declined")
-            waiters.remove(requestId)?.complete(outcome)
+            waiters.remove(requestId)?.second?.complete(outcome)
             outcome
         }
 
@@ -280,6 +334,7 @@ class Broker(
             if ((direction == Direction.INBOUND && !inboundOnly) || (direction == Direction.OUTBOUND && !outboundOnly)) {
                 return Outcome.Refused(Refusal.OUT_OF_SCOPE, "a key is either for acting or for being asked, not both")
             }
+            if (holder.kind == Principal.Kind.USER) return Outcome.Refused(Refusal.OUT_OF_SCOPE, "you don't need a key")
             mint(holder, direction, request, null)
         }
 
@@ -287,15 +342,15 @@ class Broker(
             failClosed()?.let { return it }
             val record = state.grants[grantId] ?: return Outcome.Refused(Refusal.UNKNOWN_GRANT, "no such key")
             if (record.revokedAt != null) return Outcome.Refused(Refusal.REVOKED, "already revoked")
-            Outcome.Ok(record(Event.GrantRevoked(clock.now(), grantId, Principal.User)).seq)
+            Outcome.Ok(record(Event.GrantRevoked(now(), grantId, Principal.User)).seq)
         }
 
         override suspend fun revokeAll(): Outcome = mutex.withLock {
             failClosed()?.let { return it }
             val active = state.grants.values.filter { it.revokedAt == null }.map { it.grant.id }
             val cancelled = state.pending.keys.toList()
-            val entry = record(Event.KillSwitch(clock.now(), active, cancelled))
-            cancelled.forEach { waiters.remove(it)?.complete(Outcome.Refused(Refusal.REVOKED, "everything was revoked")) }
+            val entry = record(Event.KillSwitch(now(), active, cancelled))
+            cancelled.forEach { waiters.remove(it)?.second?.complete(Outcome.Refused(Refusal.REVOKED, "everything was revoked")) }
             Outcome.Ok(entry.seq)
         }
 
@@ -307,7 +362,7 @@ class Broker(
             when {
                 placed == null -> Outcome.Refused(Refusal.OUT_OF_SCOPE, "that entry has no undo")
                 seq in state.undone || placed.holdId !in state.holds -> Outcome.Refused(Refusal.NOT_PENDING, "already undone")
-                // The user's own authority: no grant needed, but it is journaled like anything else.
+                // The user's own authority: no key needed, but it is journaled like anything else.
                 else -> execute(Principal.User, null, Action.ReleaseHold(placed.holdId), permit = null, undoOf = seq)
             }
         }
@@ -324,7 +379,7 @@ class Broker(
     }
 
     private fun mint(holder: Principal, direction: Direction, request: GrantRequest, via: RequestId?): Outcome {
-        val now = clock.now()
+        val now = now()
         val grant = Grant(
             id = GrantId(newId("g")),
             holder = holder,
@@ -342,18 +397,26 @@ class Broker(
 
     // ---- inbound side -----------------------------------------------------------------------
 
-    private inner class InboundPortImpl : InboundPort {
-        override suspend fun ask(asker: Principal, question: Question): InboundAnswer = mutex.withLock {
+    private inner class InboundPortImpl(override val asker: Principal) : InboundPort {
+        override suspend fun ask(question: Question): InboundAnswer = mutex.withLock {
             if (journal.integrityError != null) return InboundAnswer.NOT_AVAILABLE
-            val now = clock.now()
-            val weekAgo = now - 7.days
-            val verdict = Policy.authorizeInbound(asker, state.grants.values, question, context(now)) { id ->
-                state.inboundAnswered.count { (g, at) -> g == id && at > weekAgo }
+            val now = now()
+            // Whatever goes wrong, the asker sees the same decline and the user sees why (F7).
+            try {
+                answer(question, now)
+            } catch (e: Exception) {
+                record(Event.InboundAsked(now, asker, question, InboundAnswer.NOT_AVAILABLE, declineReason = Refusal.OUT_OF_SCOPE))
+                InboundAnswer.NOT_AVAILABLE
             }
-            when (verdict) {
+        }
+
+        private suspend fun answer(question: Question, now: Instant): InboundAnswer {
+            val weekAgo = now - 7.days
+            val answered = state.inboundAnswered.count { (who, at) -> who == asker.id && at > weekAgo }
+            when (val verdict = Policy.authorizeInbound(asker, state.grants.values, question, context(now, asker), answered)) {
                 is Policy.InboundVerdict.Deny -> {
                     record(Event.InboundAsked(now, asker, question, InboundAnswer.NOT_AVAILABLE, declineReason = verdict.reason))
-                    InboundAnswer.NOT_AVAILABLE
+                    return InboundAnswer.NOT_AVAILABLE
                 }
                 is Policy.InboundVerdict.Allow -> {
                     val q = question as Question.FreeAt
@@ -366,7 +429,7 @@ class Broker(
                     val busy = (fact.value as FactValue.BusyIntervals).busy.any { it.overlaps(slot) }
                     val answer = if (busy) InboundAnswer.BUSY else InboundAnswer.FREE
                     record(Event.InboundAsked(now, asker, question, answer, verdict.grant.id, factsObservedAt = fact.observedAt))
-                    answer
+                    return answer
                 }
             }
         }
@@ -382,13 +445,13 @@ class Broker(
         requestId: RequestId? = null,
         undoOf: Long? = null,
     ): Outcome {
-        val now = clock.now()
-        return try {
-            var adapterRef: String? = null
-            val result: ActionResult = when (action) {
+        val now = now()
+        var adapterRef: String? = null
+        // Step 1: the side effect. Only a failure here is an ActionFailed.
+        val result: ActionResult = try {
+            when (action) {
                 is Action.FindFreeSlots -> {
-                    val window = localWindow(action.from, action.to)
-                    val fact = busyFactCovering(window)
+                    val fact = busyFactCovering(localWindow(action.from, action.to))
                     if (!FlowGuard.mayReachPlanner(fact)) {
                         record(Event.ActionRefused(now, principal, grantId, action, Refusal.FLOW_VIOLATION, "the data is labelled secret"))
                         return Outcome.Refused(Refusal.FLOW_VIOLATION, "the data is labelled secret")
@@ -402,37 +465,54 @@ class Broker(
                 }
                 is Action.PlaceHold -> {
                     val slot = Interval.of(action.start, action.durationMinutes)
-                    adapterRef = calendar.placeHold(slot, "Hold: ${action.label}")
-                    // The hold is now busy time; drop the cached view so the next read sees it.
-                    invalidateBusy()
+                    adapterRef = adapterCall { calendar.placeHold(slot, "Hold: ${action.label}") }
                     ActionResult.HoldPlaced(HoldId(newId("h")), slot)
                 }
                 is Action.ReleaseHold -> {
                     val hold = state.holds.getValue(action.holdId)
-                    calendar.releaseHold(hold.adapterRef)
+                    adapterCall { calendar.releaseHold(hold.adapterRef) }
                     adapterRef = hold.adapterRef
-                    invalidateBusy()
                     ActionResult.HoldReleased(action.holdId)
                 }
                 is Action.SendInvite -> {
                     val slot = Interval.of(action.start, action.durationMinutes)
-                    adapterRef = calendar.createEvent(slot, action.title, action.attendees)
-                    invalidateBusy()
+                    adapterRef = adapterCall { calendar.createEvent(slot, action.title, action.attendees) }
                     ActionResult.InviteSent(slot, action.attendees)
                 }
             }
-            val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf))
-            Outcome.Done(result, entry.seq)
         } catch (e: Exception) {
-            val message = e.message ?: e::class.simpleName.orEmpty()
-            record(Event.ActionFailed(now, principal, grantId, action, message))
-            Outcome.Failed(message)
+            // The full error is for the user's log; the proposer gets a generic one, since adapter
+            // errors can carry calendar contents or credentials (F10).
+            record(Event.ActionFailed(now, principal, grantId, action, e.message ?: e::class.simpleName.orEmpty()))
+            return Outcome.Failed("${Capabilities.spec(action.capability)?.title ?: "That"} didn't work. The details are in your Activity.")
+        }
+        // Step 2: the record. Once the world has changed it must be journaled, whatever else fails (F8).
+        val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf))
+        // Step 3: housekeeping. Calendar writes make the cached busy view stale; best effort.
+        if (action !is Action.FindFreeSlots) runCatching { invalidateBusy() }
+        return Outcome.Done(result, entry.seq)
+    }
+
+    /**
+     * Runs an adapter call off the caller's job with a timeout, so a hung adapter is abandoned
+     * rather than holding the broker lock. Caveat: a blocking call that finishes after the timeout
+     * still happens; the hold or event exists but is recorded as failed (decisions.md D18).
+     */
+    private suspend fun <T> adapterCall(block: suspend () -> T): T {
+        // Detached from the caller's job, but on the caller's dispatcher (and so its clock).
+        val dispatcher = currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Default
+        val call = adapterScope.async(dispatcher) { block() }
+        return try {
+            withTimeout(ADAPTER_TIMEOUT) { call.await() }
+        } catch (e: TimeoutCancellationException) {
+            call.cancel()
+            throw IllegalStateException("the calendar did not answer within ${ADAPTER_TIMEOUT.inWholeSeconds} s")
         }
     }
 
     /** The busy-intervals fact, re-read from the calendar if missing, stale, or too narrow. */
     private suspend fun busyFactCovering(window: Interval): Fact {
-        val now = clock.now()
+        val now = now()
         val fact = facts.get(FactKeys.CALENDAR_BUSY)
         val value = fact?.value as? FactValue.BusyIntervals
         val fresh = fact != null && now < fact.staleAfter && value != null &&
@@ -441,16 +521,19 @@ class Broker(
     }
 
     private suspend fun refreshBusy(atLeast: Interval? = null): Fact {
-        val now = clock.now()
+        val now = now()
         val today = now.toLocalDateTime(zone).date
         var window = localWindow(today, today.plus(DatePeriod(days = BUSY_HORIZON_DAYS)))
         if (atLeast != null) window = Interval(minOf(window.start, atLeast.start), maxOf(window.end, atLeast.end))
-        val busy = calendar.readBusy(window).sortedBy { it.start }
+        val busy = adapterCall { calendar.readBusy(window) }.sortedBy { it.start }
+        // Labels are sticky: a refresh never lowers a sensitivity someone raised (F4). Only an
+        // explicit declassification could, and Phase 0 has none.
+        val previous = facts.get(FactKeys.CALENDAR_BUSY)?.sensitivity ?: Sensitivity.PRIVATE
         val fact = Fact(
             key = FactKeys.CALENDAR_BUSY,
             value = FactValue.BusyIntervals(window, busy),
             provenance = Provenance.OBSERVED,
-            sensitivity = Sensitivity.PRIVATE,
+            sensitivity = maxOf(previous, Sensitivity.PRIVATE),
             source = calendar.source,
             observedAt = now,
             staleAfter = now + FACT_FRESHNESS,
@@ -472,10 +555,22 @@ class Broker(
 
     // ---- plumbing ---------------------------------------------------------------------------
 
-    private fun context(now: Instant) = PolicyContext(now, zone, state.holds)
+    /**
+     * Time never runs backwards for the broker: winding the device clock back cannot revive an
+     * expired key, because now is at least the time of the last journaled event.
+     */
+    private fun now(): Instant = state.lastEventAt?.let { maxOf(it, clock.now()) } ?: clock.now()
+
+    private fun context(now: Instant, principal: Principal) = PolicyContext(
+        now, zone, state.holds, principal,
+        holdOwner = { hold -> hold.grantId?.let { state.grants[it]?.grant?.holder } },
+    )
 
     /** If the journal did not verify, nothing happens until a person looks (fail closed). */
     private fun failClosed(): Outcome? = journal.integrityError?.let { Outcome.Refused(Refusal.INTEGRITY, "the activity log failed its integrity check: $it") }
+
+    private fun oversized(json: String): String? =
+        if (json.length > MAX_PROPOSAL_CHARS) "the proposal was too large to consider (${json.length} characters)" else null
 
     private fun record(event: Event): JournalEntry {
         val entry = journal.append(event)
@@ -485,7 +580,7 @@ class Broker(
     }
 
     private fun snapshot() = BrokerSnapshot(
-        now = clock.now(),
+        now = now(),
         zone = zone,
         grants = state.grants.values.toList(),
         pending = state.pending.values.toList(),
@@ -499,7 +594,10 @@ class Broker(
     companion object {
         val APPROVAL_TTL = 15.minutes
         val FACT_FRESHNESS = 15.minutes
+        val ADAPTER_TIMEOUT = 10.seconds
         const val BUSY_HORIZON_DAYS = 30
+        const val MAX_PENDING_PER_PRINCIPAL = 5
+        const val MAX_PROPOSAL_CHARS = 4_000
         private val random = SecureRandom()
 
         /** 128 random bits: an unguessable handle (D3). */

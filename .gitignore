@@ -20,3 +20,6 @@ local.properties
 .idea/
 .vscode/
 *.iml
+
+# Private session links (see sessions.local.md)
+sessions.local.md

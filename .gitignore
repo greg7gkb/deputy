@@ -23,3 +23,7 @@ local.properties
 
 # Private session links (see sessions.local.md)
 sessions.local.md
+
+# Gradle / Kotlin caches
+.gradle/
+.kotlin/

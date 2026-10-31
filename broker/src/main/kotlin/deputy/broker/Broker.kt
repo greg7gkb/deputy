@@ -1,0 +1,517 @@
+package deputy.broker
+
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.plus
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import java.security.SecureRandom
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
+
+/**
+ * How a capability reaches the calendar. The broker is the only caller; adapters never see a
+ * grant, a proposer, or anything but typed arguments (docs/decisions.md D6).
+ */
+interface CalendarAdapter {
+    /** Shown as a fact's source, e.g. "Calendar on this phone". */
+    val source: String
+    /** Busy intervals only. Implementations must not read titles, attendees or locations. */
+    suspend fun readBusy(window: Interval): List<Interval>
+    /** Returns an adapter-internal reference, kept by the broker and never shown to a proposer. */
+    suspend fun placeHold(slot: Interval, title: String): String
+    suspend fun releaseHold(adapterRef: String)
+    suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String
+}
+
+/** What a proposer gets back. Serializable, so it is also the wire format for a remote planner. */
+@Serializable
+sealed interface Outcome {
+    @Serializable @SerialName("done")
+    data class Done(val result: ActionResult, val seq: Long) : Outcome
+
+    @Serializable @SerialName("grant_issued")
+    data class GrantIssued(val grantId: GrantId, val seq: Long) : Outcome
+
+    @Serializable @SerialName("refused")
+    data class Refused(val reason: Refusal, val detail: String) : Outcome
+
+    @Serializable @SerialName("awaiting_user")
+    data class AwaitingUser(val requestId: RequestId, val kind: ApprovalKind) : Outcome
+
+    @Serializable @SerialName("failed")
+    data class Failed(val error: String) : Outcome
+
+    /** A user-side operation (revoke, kill switch, refresh) was journaled at [seq]. */
+    @Serializable @SerialName("ok")
+    data class Ok(val seq: Long) : Outcome
+}
+
+/** What the assistant may know about its own keys: handles and limits, nothing else. */
+@Serializable
+data class GrantSummary(
+    val grantId: GrantId,
+    val title: String,
+    val capabilities: List<CapabilityId>,
+    val status: GrantRecord.Status,
+    val usesLeft: Int?,
+    val expiresAt: SInstant?,
+)
+
+/**
+ * The only door an agent has. It is bound to one principal by the host; nothing on it can
+ * approve, revoke or mint without the user (docs/decisions.md D4).
+ */
+interface AgentPort {
+    val principal: Principal
+    fun catalog(): List<CapabilitySpec>
+    suspend fun myGrants(): List<GrantSummary>
+    suspend fun requestGrant(request: GrantRequest): Outcome
+    suspend fun propose(grantId: GrantId?, action: Action): Outcome
+    /** Suspends until the user resolves [requestId], then returns the final outcome. */
+    suspend fun await(requestId: RequestId): Outcome
+}
+
+/** The person's authority. Only the UI holds this. */
+interface UserPort {
+    suspend fun approve(requestId: RequestId): Outcome
+    suspend fun decline(requestId: RequestId): Outcome
+    suspend fun mintGrant(holder: Principal, direction: Direction, request: GrantRequest): Outcome
+    suspend fun revoke(grantId: GrantId): Outcome
+    suspend fun revokeAll(): Outcome
+    suspend fun undo(seq: Long): Outcome
+    suspend fun refreshFacts(): Outcome
+}
+
+/** Other parties asking typed questions. Answers come only from the fact store. */
+interface InboundPort {
+    suspend fun ask(asker: Principal, question: Question): InboundAnswer
+}
+
+/** Everything the UI shows, as of [now]. */
+data class BrokerSnapshot(
+    val now: Instant,
+    val zone: TimeZone,
+    val grants: List<GrantRecord>,
+    val pending: List<Event.ApprovalRequested>,
+    val entries: List<JournalEntry>,
+    val holds: List<HoldRecord>,
+    val facts: List<Fact>,
+    val undone: Set<Long>,
+    val integrityError: String?,
+)
+
+/** Broker state, derived by folding the journal. Never written any other way. */
+data class BrokerState(
+    val grants: Map<GrantId, GrantRecord> = emptyMap(),
+    val pending: Map<RequestId, Event.ApprovalRequested> = emptyMap(),
+    val holds: Map<HoldId, HoldRecord> = emptyMap(),
+    val inboundAnswered: List<Pair<GrantId, Instant>> = emptyList(),
+    val undone: Set<Long> = emptySet(),
+) {
+    fun apply(entry: JournalEntry): BrokerState = when (val e = entry.event) {
+        is Event.GrantMinted -> copy(grants = grants + (e.grant.id to GrantRecord(e.grant)))
+        is Event.GrantRevoked -> copy(grants = grants.revoke(listOf(e.grantId), e.at))
+        is Event.KillSwitch -> copy(grants = grants.revoke(e.revoked, e.at), pending = pending - e.cancelled.toSet())
+        is Event.ApprovalRequested -> copy(pending = pending + (e.requestId to e))
+        is Event.ApprovalResolved -> copy(pending = pending - e.requestId)
+        is Event.ActionExecuted -> {
+            var s = this
+            if (e.grantId != null) {
+                s.grants[e.grantId]?.let { s = s.copy(grants = s.grants + (e.grantId to it.copy(usesConsumed = it.usesConsumed + 1))) }
+            }
+            when (val r = e.result) {
+                is ActionResult.HoldPlaced -> s = s.copy(holds = s.holds + (r.holdId to HoldRecord(r.holdId, r.slot, e.adapterRef.orEmpty(), e.grantId)))
+                is ActionResult.HoldReleased -> s = s.copy(holds = s.holds - r.holdId)
+                else -> Unit
+            }
+            if (e.undoOf != null) s = s.copy(undone = s.undone + e.undoOf)
+            s
+        }
+        is Event.InboundAsked ->
+            if (e.answer != InboundAnswer.NOT_AVAILABLE && e.grantId != null) copy(inboundAnswered = inboundAnswered + (e.grantId to e.at)) else this
+        is Event.ActionRefused, is Event.ActionFailed, is Event.FactsRefreshed -> this
+    }
+
+    private fun Map<GrantId, GrantRecord>.revoke(ids: List<GrantId>, at: Instant) =
+        this + ids.mapNotNull { id -> this[id]?.takeIf { it.revokedAt == null }?.let { id to it.copy(revokedAt = at) } }
+}
+
+/**
+ * The reference monitor. Holds the adapters (the real authority), checks every proposal with
+ * [Policy], journals every state change, and owns the kill switch. Plain deterministic code.
+ */
+class Broker(
+    journalStorage: JournalStorage,
+    private val facts: FactStore,
+    private val calendar: CalendarAdapter,
+    private val clock: Clock = Clock.System,
+    val zone: TimeZone = TimeZone.currentSystemDefault(),
+    private val newId: (prefix: String) -> String = ::randomId,
+) {
+    private val mutex = Mutex()
+    private val journal = Journal(journalStorage)
+    private var state = journal.entries.fold(BrokerState()) { s, e -> s.apply(e) }
+    private val waiters = mutableMapOf<RequestId, CompletableDeferred<Outcome>>()
+    private val _snapshot = MutableStateFlow(snapshot())
+    val snapshots: StateFlow<BrokerSnapshot> = _snapshot.asStateFlow()
+
+    val user: UserPort = UserPortImpl()
+    val inbound: InboundPort = InboundPortImpl()
+    fun agentPort(principal: Principal): AgentPort = AgentPortImpl(principal)
+
+    /** Re-publish the snapshot so time-based states (expiry) update in the UI. */
+    fun tick() { _snapshot.value = snapshot() }
+
+    // ---- agent side -------------------------------------------------------------------------
+
+    private inner class AgentPortImpl(override val principal: Principal) : AgentPort {
+        init { require(principal.kind != Principal.Kind.USER) { "the user does not act through an agent port" } }
+
+        override fun catalog() = Capabilities.catalog.filter { it.direction == Direction.OUTBOUND }
+
+        override suspend fun myGrants(): List<GrantSummary> = mutex.withLock {
+            val now = clock.now()
+            state.grants.values.filter { it.grant.holder == principal }.map {
+                GrantSummary(it.grant.id, it.grant.title, it.grant.permits.flatMap { p -> p.capabilities }.distinct(),
+                    it.status(now), it.usesLeft, it.grant.expiresAt)
+            }
+        }
+
+        override suspend fun requestGrant(request: GrantRequest): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            Policy.validateGrantRequest(principal, request)?.let { detail ->
+                record(Event.ActionRefused(clock.now(), principal, null, null, Refusal.OUT_OF_SCOPE, "key request refused: $detail"))
+                return Outcome.Refused(Refusal.OUT_OF_SCOPE, detail)
+            }
+            requestApproval(principal, ApprovalKind.MINT_GRANT, grantRequest = request)
+        }
+
+        override suspend fun propose(grantId: GrantId?, action: Action): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            val now = clock.now()
+            val record = grantId?.let { state.grants[it] }
+            when (val verdict = Policy.authorize(principal, record, action, context(now))) {
+                is Verdict.Deny -> {
+                    record(Event.ActionRefused(now, principal, grantId, action, verdict.reason, verdict.detail))
+                    Outcome.Refused(verdict.reason, verdict.detail)
+                }
+                is Verdict.Allow ->
+                    if (verdict.needsConfirmation) requestApproval(principal, ApprovalKind.CONFIRM_PERMANENT, grantId, action)
+                    else execute(principal, grantId, action, verdict.permit)
+            }
+        }
+
+        override suspend fun await(requestId: RequestId): Outcome {
+            val waiter = mutex.withLock { waiters[requestId] }
+                ?: return Outcome.Refused(Refusal.NOT_PENDING, "nothing is waiting on that request")
+            return waiter.await()
+        }
+    }
+
+    private fun requestApproval(
+        principal: Principal,
+        kind: ApprovalKind,
+        grantId: GrantId? = null,
+        action: Action? = null,
+        grantRequest: GrantRequest? = null,
+    ): Outcome {
+        val now = clock.now()
+        val id = RequestId(newId("r"))
+        record(Event.ApprovalRequested(now, id, principal, kind, grantId, action, grantRequest, now + APPROVAL_TTL))
+        waiters[id] = CompletableDeferred()
+        return Outcome.AwaitingUser(id, kind)
+    }
+
+    // ---- user side --------------------------------------------------------------------------
+
+    private inner class UserPortImpl : UserPort {
+        override suspend fun approve(requestId: RequestId): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            val now = clock.now()
+            val pending = state.pending[requestId] ?: return Outcome.Refused(Refusal.NOT_PENDING, "nothing is waiting on that request")
+            record(Event.ApprovalResolved(now, requestId, approved = now < pending.expiresAt, by = Principal.User))
+            val outcome = if (now >= pending.expiresAt) {
+                Outcome.Refused(Refusal.NOT_PENDING, "the request expired before it was approved")
+            } else when (pending.kind) {
+                ApprovalKind.MINT_GRANT -> mint(pending.principal, Direction.OUTBOUND, pending.grantRequest!!, requestId)
+                ApprovalKind.CONFIRM_PERMANENT -> {
+                    // Check again: the key may have been revoked or used up while the person decided.
+                    val action = pending.action!!
+                    when (val verdict = Policy.authorize(pending.principal, pending.grantId?.let { state.grants[it] }, action, context(now))) {
+                        is Verdict.Deny -> {
+                            record(Event.ActionRefused(now, pending.principal, pending.grantId, action, verdict.reason, verdict.detail))
+                            Outcome.Refused(verdict.reason, verdict.detail)
+                        }
+                        is Verdict.Allow -> execute(pending.principal, pending.grantId, action, verdict.permit, requestId)
+                    }
+                }
+            }
+            waiters.remove(requestId)?.complete(outcome)
+            outcome
+        }
+
+        override suspend fun decline(requestId: RequestId): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            if (requestId !in state.pending) return Outcome.Refused(Refusal.NOT_PENDING, "nothing is waiting on that request")
+            record(Event.ApprovalResolved(clock.now(), requestId, approved = false, by = Principal.User))
+            val outcome = Outcome.Refused(Refusal.DECLINED_BY_USER, "you declined")
+            waiters.remove(requestId)?.complete(outcome)
+            outcome
+        }
+
+        override suspend fun mintGrant(holder: Principal, direction: Direction, request: GrantRequest): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            Policy.validateGrantRequest(Principal.User, request)?.let { return Outcome.Refused(Refusal.OUT_OF_SCOPE, it) }
+            val inboundOnly = request.permits.all { it is Permit.InboundFreeBusy }
+            val outboundOnly = request.permits.none { it is Permit.InboundFreeBusy }
+            if ((direction == Direction.INBOUND && !inboundOnly) || (direction == Direction.OUTBOUND && !outboundOnly)) {
+                return Outcome.Refused(Refusal.OUT_OF_SCOPE, "a key is either for acting or for being asked, not both")
+            }
+            mint(holder, direction, request, null)
+        }
+
+        override suspend fun revoke(grantId: GrantId): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            val record = state.grants[grantId] ?: return Outcome.Refused(Refusal.UNKNOWN_GRANT, "no such key")
+            if (record.revokedAt != null) return Outcome.Refused(Refusal.REVOKED, "already revoked")
+            Outcome.Ok(record(Event.GrantRevoked(clock.now(), grantId, Principal.User)).seq)
+        }
+
+        override suspend fun revokeAll(): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            val active = state.grants.values.filter { it.revokedAt == null }.map { it.grant.id }
+            val cancelled = state.pending.keys.toList()
+            val entry = record(Event.KillSwitch(clock.now(), active, cancelled))
+            cancelled.forEach { waiters.remove(it)?.complete(Outcome.Refused(Refusal.REVOKED, "everything was revoked")) }
+            Outcome.Ok(entry.seq)
+        }
+
+        override suspend fun undo(seq: Long): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            val entry = journal.entries.firstOrNull { it.seq == seq }
+            val executed = entry?.event as? Event.ActionExecuted
+            val placed = executed?.result as? ActionResult.HoldPlaced
+            when {
+                placed == null -> Outcome.Refused(Refusal.OUT_OF_SCOPE, "that entry has no undo")
+                seq in state.undone || placed.holdId !in state.holds -> Outcome.Refused(Refusal.NOT_PENDING, "already undone")
+                // The user's own authority: no grant needed, but it is journaled like anything else.
+                else -> execute(Principal.User, null, Action.ReleaseHold(placed.holdId), permit = null, undoOf = seq)
+            }
+        }
+
+        override suspend fun refreshFacts(): Outcome = mutex.withLock {
+            failClosed()?.let { return it }
+            try {
+                refreshBusy()
+                Outcome.Ok(journal.entries.last().seq)
+            } catch (e: Exception) {
+                Outcome.Failed(e.message ?: e::class.simpleName.orEmpty())
+            }
+        }
+    }
+
+    private fun mint(holder: Principal, direction: Direction, request: GrantRequest, via: RequestId?): Outcome {
+        val now = clock.now()
+        val grant = Grant(
+            id = GrantId(newId("g")),
+            holder = holder,
+            direction = direction,
+            title = request.title,
+            permits = request.permits,
+            maxUses = request.maxUses,
+            issuedAt = now,
+            expiresAt = GrantTemplates.ttlToExpiry(now, request.ttlMinutes),
+            purpose = request.purpose,
+        )
+        val entry = record(Event.GrantMinted(now, grant, via))
+        return Outcome.GrantIssued(grant.id, entry.seq)
+    }
+
+    // ---- inbound side -----------------------------------------------------------------------
+
+    private inner class InboundPortImpl : InboundPort {
+        override suspend fun ask(asker: Principal, question: Question): InboundAnswer = mutex.withLock {
+            if (journal.integrityError != null) return InboundAnswer.NOT_AVAILABLE
+            val now = clock.now()
+            val weekAgo = now - 7.days
+            val verdict = Policy.authorizeInbound(asker, state.grants.values, question, context(now)) { id ->
+                state.inboundAnswered.count { (g, at) -> g == id && at > weekAgo }
+            }
+            when (verdict) {
+                is Policy.InboundVerdict.Deny -> {
+                    record(Event.InboundAsked(now, asker, question, InboundAnswer.NOT_AVAILABLE, declineReason = verdict.reason))
+                    InboundAnswer.NOT_AVAILABLE
+                }
+                is Policy.InboundVerdict.Allow -> {
+                    val q = question as Question.FreeAt
+                    val slot = Interval.of(q.start, q.durationMinutes)
+                    val fact = try { busyFactCovering(slot) } catch (e: Exception) { null }
+                    if (fact == null || !FlowGuard.mayAnswerInbound(fact)) {
+                        record(Event.InboundAsked(now, asker, question, InboundAnswer.NOT_AVAILABLE, verdict.grant.id, Refusal.INBOUND_NO_FACTS))
+                        return InboundAnswer.NOT_AVAILABLE
+                    }
+                    val busy = (fact.value as FactValue.BusyIntervals).busy.any { it.overlaps(slot) }
+                    val answer = if (busy) InboundAnswer.BUSY else InboundAnswer.FREE
+                    record(Event.InboundAsked(now, asker, question, answer, verdict.grant.id, factsObservedAt = fact.observedAt))
+                    answer
+                }
+            }
+        }
+    }
+
+    // ---- execution --------------------------------------------------------------------------
+
+    private suspend fun execute(
+        principal: Principal,
+        grantId: GrantId?,
+        action: Action,
+        permit: Permit?,
+        requestId: RequestId? = null,
+        undoOf: Long? = null,
+    ): Outcome {
+        val now = clock.now()
+        return try {
+            var adapterRef: String? = null
+            val result: ActionResult = when (action) {
+                is Action.FindFreeSlots -> {
+                    val window = localWindow(action.from, action.to)
+                    val fact = busyFactCovering(window)
+                    if (!FlowGuard.mayReachPlanner(fact)) {
+                        record(Event.ActionRefused(now, principal, grantId, action, Refusal.FLOW_VIOLATION, "the data is labelled secret"))
+                        return Outcome.Refused(Refusal.FLOW_VIOLATION, "the data is labelled secret")
+                    }
+                    val granularity = (permit as? Permit.FreeBusy)?.granularityMinutes ?: 30
+                    val slots = Slots.find(
+                        (fact.value as FactValue.BusyIntervals).busy, action.from, action.to, action.durationMinutes,
+                        action.earliestHour, action.latestHour, granularity, action.maxResults, now, zone,
+                    )
+                    ActionResult.FreeSlots(slots, fact.observedAt)
+                }
+                is Action.PlaceHold -> {
+                    val slot = Interval.of(action.start, action.durationMinutes)
+                    adapterRef = calendar.placeHold(slot, "Hold: ${action.label}")
+                    // The hold is now busy time; drop the cached view so the next read sees it.
+                    invalidateBusy()
+                    ActionResult.HoldPlaced(HoldId(newId("h")), slot)
+                }
+                is Action.ReleaseHold -> {
+                    val hold = state.holds.getValue(action.holdId)
+                    calendar.releaseHold(hold.adapterRef)
+                    adapterRef = hold.adapterRef
+                    invalidateBusy()
+                    ActionResult.HoldReleased(action.holdId)
+                }
+                is Action.SendInvite -> {
+                    val slot = Interval.of(action.start, action.durationMinutes)
+                    adapterRef = calendar.createEvent(slot, action.title, action.attendees)
+                    invalidateBusy()
+                    ActionResult.InviteSent(slot, action.attendees)
+                }
+            }
+            val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf))
+            Outcome.Done(result, entry.seq)
+        } catch (e: Exception) {
+            val message = e.message ?: e::class.simpleName.orEmpty()
+            record(Event.ActionFailed(now, principal, grantId, action, message))
+            Outcome.Failed(message)
+        }
+    }
+
+    /** The busy-intervals fact, re-read from the calendar if missing, stale, or too narrow. */
+    private suspend fun busyFactCovering(window: Interval): Fact {
+        val now = clock.now()
+        val fact = facts.get(FactKeys.CALENDAR_BUSY)
+        val value = fact?.value as? FactValue.BusyIntervals
+        val fresh = fact != null && now < fact.staleAfter && value != null &&
+            value.window.start <= window.start && value.window.end >= window.end
+        return if (fresh) fact!! else refreshBusy(window)
+    }
+
+    private suspend fun refreshBusy(atLeast: Interval? = null): Fact {
+        val now = clock.now()
+        val today = now.toLocalDateTime(zone).date
+        var window = localWindow(today, today.plus(DatePeriod(days = BUSY_HORIZON_DAYS)))
+        if (atLeast != null) window = Interval(minOf(window.start, atLeast.start), maxOf(window.end, atLeast.end))
+        val busy = calendar.readBusy(window).sortedBy { it.start }
+        val fact = Fact(
+            key = FactKeys.CALENDAR_BUSY,
+            value = FactValue.BusyIntervals(window, busy),
+            provenance = Provenance.OBSERVED,
+            sensitivity = Sensitivity.PRIVATE,
+            source = calendar.source,
+            observedAt = now,
+            staleAfter = now + FACT_FRESHNESS,
+        )
+        facts.put(fact)
+        record(Event.FactsRefreshed(now, fact.key, fact.source, busy.size))
+        return fact
+    }
+
+    private fun invalidateBusy() {
+        val fact = facts.get(FactKeys.CALENDAR_BUSY) ?: return
+        facts.put(fact.copy(staleAfter = fact.observedAt))
+    }
+
+    private fun localWindow(from: kotlinx.datetime.LocalDate, to: kotlinx.datetime.LocalDate) = Interval(
+        LocalDateTime(from, LocalTime(0, 0)).toInstant(zone),
+        LocalDateTime(to.plus(DatePeriod(days = 1)), LocalTime(0, 0)).toInstant(zone),
+    )
+
+    // ---- plumbing ---------------------------------------------------------------------------
+
+    private fun context(now: Instant) = PolicyContext(now, zone, state.holds)
+
+    /** If the journal did not verify, nothing happens until a person looks (fail closed). */
+    private fun failClosed(): Outcome? = journal.integrityError?.let { Outcome.Refused(Refusal.INTEGRITY, "the activity log failed its integrity check: $it") }
+
+    private fun record(event: Event): JournalEntry {
+        val entry = journal.append(event)
+        state = state.apply(entry)
+        _snapshot.value = snapshot()
+        return entry
+    }
+
+    private fun snapshot() = BrokerSnapshot(
+        now = clock.now(),
+        zone = zone,
+        grants = state.grants.values.toList(),
+        pending = state.pending.values.toList(),
+        entries = journal.entries,
+        holds = state.holds.values.toList(),
+        facts = facts.all(),
+        undone = state.undone,
+        integrityError = journal.integrityError,
+    )
+
+    companion object {
+        val APPROVAL_TTL = 15.minutes
+        val FACT_FRESHNESS = 15.minutes
+        const val BUSY_HORIZON_DAYS = 30
+        private val random = SecureRandom()
+
+        /** 128 random bits: an unguessable handle (D3). */
+        fun randomId(prefix: String): String {
+            val bytes = ByteArray(16).also { random.nextBytes(it) }
+            return prefix + "_" + bytes.joinToString("") { "%02x".format(it) }
+        }
+    }
+}
+
+/** Information-flow rules on facts. Deterministic, label-driven. */
+object FlowGuard {
+    fun mayReachPlanner(fact: Fact) = fact.sensitivity != Sensitivity.SECRET
+    fun mayAnswerInbound(fact: Fact) = fact.sensitivity != Sensitivity.SECRET
+}

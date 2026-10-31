@@ -25,7 +25,15 @@ that can act. The broker's enforcement is deterministic code, never an LLM.
 - **Keyring**: the product's main surface. Lists active authority in plain words,
   offers one-tap revoke, and a revoke-all kill switch.
 - **Activity**: append-only log of what was done, refused, or asked about, written
-  for a person to read.
+  for a person to read. Inbound questions (Phase 3) are logged here too: who asked,
+  what, and what was answered.
+- **Fact store**: the typed record of what Deputy knows about the user, written only
+  by the broker. Every fact carries a provenance label and a freshness time. The
+  four labels, in descending trust: *attested* (a third party signed it: an mDL,
+  a bank's KYC result), *observed* (read from a service through an adapter),
+  *inferred* (a model derived it), *asserted* (the user said so). Adapters write
+  into the fact store from Phase 0 rather than caching privately; it is also the
+  only thing the inbound surface answers from.
 - **Dual-model split (CaMeL-style)**: a cloud planner that sees only the user's
   request plus the capability catalog and never touches untrusted content; an
   on-device model that reads untrusted content (email, texts, notifications) into
@@ -51,6 +59,10 @@ that can act. The broker's enforcement is deterministic code, never an LLM.
 - **Interoperability work stays within the user's own authorized access.** No
   hunting for auth bypasses, and nothing that would function as an exploit for
   someone without legitimate access.
+- **Inbound questions are answered by the broker, from the fact store, from a fixed
+  typed query vocabulary.** The planner never sees or answers an inbound question;
+  models only work on the ingest side. Open-ended natural-language questions about
+  the user are not a supported input.
 
 ## Action risk tiers
 
@@ -68,6 +80,10 @@ or people tap "yes" on reflex and the protection evaporates.
   plan over.
 - **Phase 2**: the capability-catalog pipeline (scan, label, verify, promote) and
   payment-prefill adapters plus capped-card authority.
+- **Phase 3**: the inbound surface. Other parties (services, other people's
+  Deputies) ask typed questions about the user; the broker answers deterministically
+  from the fact store under inbound grants that appear in the Keyring like any other
+  authority. First capability: free/busy. See `docs/design.md` section 10.
 
 See `docs/design.md` for the reasoning behind all of this, and `docs/log.md` for
 the running build log.

@@ -71,7 +71,9 @@ to design first and best. The chat box is almost incidental.
 Single-user (the wedge, and what belongs in the OS):
 1. Notification triage that cannot be phished (secrets labelled, cannot leave).
 2. Spending with a budget (capped single-use card; the bank enforces the cap).
-3. Scheduling without leaking your calendar (free/busy out, titles withheld).
+3. Scheduling without leaking your calendar (free/busy out, titles withheld). Also
+   the first inbound capability (section 10): the same free/busy answer, served to
+   a party that asked, under a grant you can see and revoke.
 4. Bulk cleanup with honest undo (reversibility classes, real undo).
 5. A guest pass (scoped, revocable authority handed to a person).
 6. The kill switch (revoke everything at once).
@@ -146,6 +148,22 @@ not.
   expose a powerful action than handing an agent a full account session. That is
   also the strongest version of the platform pitch: the trust layer is what unlocks
   the developer supply side that AppFunctions needs.
+- **The median app's own code is a minority of what it ships.** A composition
+  analysis of the 115 third-party APKs from the scan (DEX parsed, every class
+  attributed by package prefix; see `~/code/deputy-scan/README.md` and
+  `composition_report.md`) found the median app's first-party code is 30% of its
+  identifiable bytecode and 70% is third-party library; 500 MB of the phone is
+  androidx, Compose and Kotlin shipped 115 times; 36 of 115 apps carry more
+  analytics, crash, fraud and payments code than their own code; and the Flutter
+  and React Native apps have essentially no first-party DEX at all, their logic
+  living in asset bundles behind a 60 MB interpreter. Two readings. The bulk of an
+  app is infrastructure every other app also ships, the DOS printer-driver pattern,
+  which an agent-native OS provides once. And the layer that remains, roughly 11%
+  at the median and up to 30%, exists for the service's business rather than the
+  user's task (attribution, consent, A/B, fraud, payments). A manifest-shaped app
+  removes the first layer and must offer developers a substitute for the second:
+  an entry point that is still theirs, a presentation contract, telemetry they
+  trust, and a payment rail. That is the adoption question, and it now has a size.
 
 ## 9. Open unknowns to de-risk early
 
@@ -157,3 +175,108 @@ not.
   listeners (how much secret-labelling comes for free).
 - The exact shape of any bank's P2P prefill deep link (read locally with jadx on
   your own machine).
+
+## 10. Inbound: the same broker, the other direction
+
+Public-key cryptography inverted the problem of secrecy: instead of sharing a
+secret with everyone you want to hear from, you publish how to write to you and
+keep the key. Deputy can invert the problem of personal data the same way. Rather
+than trying to own copies of what every service holds about the user (which
+sections 2 and 8 say is mostly not on offer), the user publishes how to *ask* them,
+and answers under policy. Other parties send typed questions; the broker answers
+from the fact store with the least derived value that satisfies the question, logs
+who asked, and the user can revoke the grant.
+
+This is not a second system. The outbound side of Deputy governs what the user's
+agent may do to the world; the inbound side governs what the world may learn about
+the user. Same broker, same token model, same policy engine. The Keyring gains a
+second tab ("who may ask me what"), the Activity log gains inbound entries, and the
+adapters' read side feeds the fact store that inbound answers are drawn from. If
+the design holds, Phase 3 should reuse most of Phase 0; if it does not, that is a
+finding about the design worth having, and it can only be had in one codebase.
+
+Prior art exists in pieces and nobody has assembled it: free/busy in calendaring,
+OpenID Connect claims ("over 18" without the birthdate), W3C Verifiable Credentials
+and ISO mobile driver's licences with selective disclosure (live in California and
+a dozen other states), Solid pods, and Plaid as a mediated query layer over banks.
+
+### What it could unlock
+
+- **Integration cost goes from N×M to N+M.** Every service holds its own stale
+  profile of the user and every pair integrates separately. With an inbound
+  surface each service integrates once with "the person". Forms stop existing.
+- **Minimisation by construction.** Answers are predicates and derived values,
+  never records. The asker's breach surface shrinks because it never held the data.
+- **Inbound consent becomes a ledger.** Every question is logged with the asker's
+  identity and the grant that allowed it. The Keyring, pointed the other way.
+- **The incentive inverts.** Services that want to know things must come to the
+  user, who can rate-limit or price. More usefully, it gives services a reason to
+  *push* typed records (receipts, bookings, subscriptions): feeding the fact store
+  is how they earn the right to query it later. Email receipts are the degenerate
+  version of this already; the fact store is a structured inbox with a policy-
+  filtered outbox.
+- **Typed Deputy-to-Deputy exchange** (section 5, multi-user) is the same surface
+  used between two people: scheduling, splitting a bill, matching, with no
+  natural-language channel for an injected instruction to ride in on.
+
+### Design decisions
+
+- **Provenance on every fact.** Four labels, descending trust: attested, observed,
+  inferred, asserted (defined in `CLAUDE.md`). What the broker is willing to answer
+  keys on the label. An attested fact is an issuer-signed credential that the
+  broker stores and relays (or derives a predicate from, with the signature
+  attached); the issuer does not "validate a field" in Deputy's store, and the
+  relying party trusts the issuer's key, not Deputy. That means Deputy cannot forge
+  and cannot be blamed. Realistic issuers today: the DMV (mDL), banks via KYC,
+  employers, universities. Revocation and freshness of credentials is the known
+  hard part of that ecosystem and is inherited here.
+- **A fixed, typed query vocabulary, not open questions.** Free/busy at 30-minute
+  granularity, over-21, a named preference field, and so on. This gives injection
+  resistance and bounded information content in a single move, because the
+  information leaked by a finite vocabulary can be reasoned about in advance; an
+  open natural-language question cannot be. It is the same choice already made for
+  Deputy-to-Deputy requests.
+- **The broker answers, deterministically.** The planner never sees an inbound
+  question and never composes an answer. Models work only on the ingest side: the
+  quarantined on-device model turns untrusted content into typed facts with an
+  *inferred* or *observed* label, exactly as it does for notification triage.
+- **Phone as root of trust, cloud as responder.** The inbound surface has to be
+  reachable when the phone is asleep, which argues for an always-on private cloud
+  component. That component must be the most exposed piece of the system and must
+  not hold root keys: the phone mints attenuated tokens, the cloud responder holds
+  those plus a cache of answerable facts. The broker pattern, one hop out.
+- **Priming the store with the adapter tiers already in the design.** On-device
+  APIs, cloud APIs, notification and accessibility reads, and reading the user's
+  own accounts with the user's own credentials. The Plaid precedent is that
+  scraping at scale is what forced open banking into existence; the bet is that a
+  populated fact store is what gives services a reason to push structured data
+  rather than be scraped. All of it stays within the user's own authorised access
+  (hard rule), which rules out network interception of pinned traffic and anything
+  that would function as a bypass.
+
+### Leakage, and why rate limiting is not enough
+
+Repeated narrow questions reconstruct the underlying data ("free at 3pm Tuesday?"
+asked a thousand times is the calendar). Rate limiting handles that. Three attacks
+it does not handle: *collusion* (a hundred askers each within budget, pooling
+answers, which is the data-broker business model); *low-count, high-information
+questions* ("free any time next week?" leaks far more than one slot); and *refusal
+as signal* (declining to answer "do you have condition X" is an answer unless
+declines are uniform). The closer analogy is the Census Bureau's disclosure
+avoidance, not DDoS defence. Mitigations, in order of leverage: the fixed coarse
+vocabulary above; a per-asker information budget rather than a request count;
+uniform declines for whole categories; and auditing of question patterns across
+askers. Manageable at design time; not a solved problem.
+
+### Open unknowns
+
+- Whether any issuer will sign a credential to a personal broker rather than to a
+  platform wallet (Google Wallet and Apple Wallet are the incumbents here).
+- Credential revocation and freshness UX.
+- Collusion detection across askers without a central party.
+- Cold start, deferred by decision. The credible wedge is form-filling: browser
+  autofill is the inbound surface with no policy, and already has universal
+  adoption, so "fill this from my fact store, under my policy, and log who asked"
+  is a small step from something people already do.
+- A name. "Oracle" is the working term and collides with a database company. Pick
+  something in the Deputy / Keyring / Activity register before Phase 3 starts.

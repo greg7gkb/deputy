@@ -27,3 +27,6 @@ sessions.local.md
 # Gradle / Kotlin caches
 .gradle/
 .kotlin/
+
+# Personal screenshots shared for review (may contain account details)
+sshots/

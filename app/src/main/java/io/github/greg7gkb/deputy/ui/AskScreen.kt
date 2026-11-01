@@ -44,7 +44,8 @@ import deputy.broker.GrantRecord
 import deputy.broker.present.ActivityItem
 import deputy.broker.present.Tone
 import io.github.greg7gkb.deputy.DeputyApp
-import io.github.greg7gkb.deputy.agent.StubPlanner.Step
+import deputy.planner.ClaudePlanner
+import deputy.planner.Transcript.Step
 import kotlinx.datetime.toLocalDateTime
 
 @Composable
@@ -56,8 +57,10 @@ fun AskScreen(
     onRequestCalendar: () -> Unit,
     onSeeActivity: () -> Unit,
 ) {
-    val transcript by app.planner.transcript.collectAsStateWithLifecycle()
-    val busy by app.planner.busy.collectAsStateWithLifecycle()
+    val transcript by app.transcript.steps.collectAsStateWithLifecycle()
+    val plannerBusy by app.planner.busy.collectAsStateWithLifecycle()
+    val probeBusy by app.probe.busy.collectAsStateWithLifecycle()
+    val busy = plannerBusy || probeBusy
     var text by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
 
@@ -65,7 +68,7 @@ fun AskScreen(
         val r = request.trim()
         if (r.isEmpty() || busy) return
         text = ""
-        app.act({ app.planner.handle(r) })
+        app.act({ if (r == PROBE_SUGGESTION) app.runProbe() else app.planner.handle(r) })
     }
 
     // One card per request, newest first (the same order as Keyring and Activity); steps read
@@ -89,7 +92,8 @@ fun AskScreen(
             Column {
                 SectionLabel("Ask Deputy")
                 Text(
-                    "In Phase 0 the assistant is a script, not an AI. It can only propose; Deputy decides.",
+                    if (app.planner is ClaudePlanner) "The assistant is Claude (${(app.planner as ClaudePlanner).model}), in the cloud. It sees your request and the times Deputy hands back, never your calendar. It can only propose; Deputy decides."
+                    else "No API key is configured, so the assistant is a keyword script. It can only propose; Deputy decides.",
                     style = Type.Sub.copy(fontSize = 12.5.sp),
                     modifier = Modifier.padding(top = 2.dp),
                 )
@@ -97,11 +101,11 @@ fun AskScreen(
                 AskInput(text, onChange = { text = it }, enabled = !busy, onSend = { send(text) })
             }
         }
-        item { Suggestions(app.planner.suggestions, enabled = !busy, onPick = ::send) }
+        item { Suggestions(app.planner.suggestions + PROBE_SUGGESTION, enabled = !busy, onPick = ::send) }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionLabel(if (transcript.isEmpty()) "Nothing asked yet" else "Requests, newest first", Modifier.weight(1f))
-                if (transcript.isNotEmpty() && !busy) SmallButton("Clear", onClick = { app.planner.clear() })
+                if (transcript.isNotEmpty() && !busy) SmallButton("Clear", onClick = { app.transcript.clear() })
             }
         }
         itemsIndexed(runs) { i, run -> RunCard(run, working = busy && i == 0) }
@@ -206,11 +210,14 @@ private fun Suggestions(suggestions: List<String>, enabled: Boolean, onPick: (St
     }
 }
 
-/** Who each kind of step comes from. */
-private fun actorOf(kind: Step.Kind) = when (kind) {
+private const val PROBE_SUGGESTION = "Try to break the rules (scripted test)"
+
+/** Who a step comes from. Null for notes about the run itself (token counts, API errors). */
+private fun actorOf(step: Step): String? = when (step.kind) {
     Step.Kind.USER -> Actors.YOU
-    Step.Kind.SAYS, Step.Kind.PROPOSES -> Actors.ASSISTANT
+    Step.Kind.SAYS, Step.Kind.PROPOSES -> if (step.source == "scripted test") Actors.PROBE else "Assistant (${step.source})"
     Step.Kind.BROKER -> Actors.DEPUTY
+    Step.Kind.INFO -> null
 }
 
 /** One request and everything that followed it, with a caption whenever the actor changes. */
@@ -219,8 +226,8 @@ private fun RunCard(run: List<Step>, working: Boolean) {
     DCard(padding = 12.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             run.forEachIndexed { i, step ->
-                val actor = actorOf(step.kind)
-                if (step.kind != Step.Kind.USER && (i == 0 || actorOf(run[i - 1].kind) != actor)) {
+                val actor = actorOf(step)
+                if (actor != null && step.kind != Step.Kind.USER && (i == 0 || actorOf(run[i - 1]) != actor)) {
                     Text(actor.uppercase(), style = Type.Mono.copy(fontSize = 10.sp, color = if (actor == Actors.DEPUTY) Palette.Green else Palette.Muted),
                         modifier = Modifier.padding(top = 4.dp))
                 }
@@ -247,6 +254,7 @@ private fun StepView(step: Step) {
             )
         }
         Step.Kind.SAYS -> Text(step.text, style = Type.Body)
+        Step.Kind.INFO -> Text(step.text, style = Type.Mono.copy(fontSize = 10.5.sp), modifier = Modifier.padding(top = 4.dp))
         Step.Kind.PROPOSES -> ProposalCard(step)
         Step.Kind.BROKER -> {
             val refused = step.text.startsWith("refused")

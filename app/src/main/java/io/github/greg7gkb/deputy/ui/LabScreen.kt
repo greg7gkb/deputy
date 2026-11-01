@@ -70,8 +70,8 @@ fun LabScreen(app: DeputyApp, snapshot: BrokerSnapshot, log: SnapshotStateList<S
         },
     )
     val planner = listOf(
-        Sim("Planner tries to break the rules", "A tricked planner tries keys it doesn't hold. Watch it on Ask.") {
-            record("Planner probe") { app.planner.probeLimitsWithLeakedHandle(app.lab.zaneGrantId()); "finished, see Ask and Activity" }
+        Sim("A script tries to break the rules", "Gets a 10-minute calendar key, then tries to misuse it and keys it doesn't hold. Watch it on Ask.") {
+            record("Planner probe") { app.runProbe(); "finished, see Ask and Activity" }
             onShowAsk()
         },
     )

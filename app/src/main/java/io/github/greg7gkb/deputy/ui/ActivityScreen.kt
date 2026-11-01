@@ -69,7 +69,7 @@ fun ActivityScreen(app: DeputyApp, snapshot: BrokerSnapshot, items: List<Activit
         }
         if (items.isEmpty()) item { DCard { Text("Nothing yet. Every action, refusal and question will be written here.", style = Type.Sub) } }
         items(items, key = { it.seq }) {
-            ActivityCard(it, Actors.label(it.actor, app.lab), focused = it.artifactId != null && it.artifactId == focusArtifact,
+            ActivityCard(it, Actors.label(it.actor, app), focused = it.artifactId != null && it.artifactId == focusArtifact,
                 undoing = it.undoSeq in undoing, onUndo = ::undo, onOpen = ::open)
         }
         item {

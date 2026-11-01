@@ -8,6 +8,24 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 (late night) — A real planner: Claude
+
+- New `planner/` module (pure Kotlin/JVM): `ClaudePlanner` drives `claude-sonnet-5-5` through the
+  Messages API with six strict tools that map one-to-one onto broker calls (`list_my_keys`,
+  `request_key`, `find_free_slots`, `place_hold`, `release_hold`, `send_invite`). A hand-written
+  loop rather than the SDK's tool runner, because a call can wait minutes for the user's tap and
+  nothing may execute except through the `AgentPort`. Adaptive thinking at effort `medium`,
+  prompt caching on the tools and system prompt, the server-side refusal fallback, and an
+  append-only history so the model's thinking blocks replay unchanged.
+- Tested against the real API on the laptop first (a live test, opt-in with `-PliveApi`): Claude
+  listed its keys, asked for one, waited for approval, found slots, held one, and said what it
+  did and didn't do. About 3 cents. Then on the emulator through the real UI.
+- The scripted planner stays: as the assistant when no API key is configured, and as the
+  "try to break the rules" script, which now has its own identity ("Scripted test") and is
+  handed its own 10-minute key, so its refusals are never attributed to Claude.
+- Noticed: asked for "one or two short sentences, no markdown", Claude still answered with a
+  bulleted list of options. A prompt-tuning item, not a safety one.
+
 ## 2026-10-31 (night) — Links back from what Deputy creates
 
 - Feedback from the first run on the Pixel: a hold in Google Calendar should link back to

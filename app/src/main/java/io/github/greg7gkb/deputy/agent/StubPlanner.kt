@@ -14,6 +14,9 @@ import deputy.broker.Journal
 import deputy.broker.Outcome
 import deputy.broker.Permit
 import deputy.broker.present.Format
+import deputy.planner.Planner
+import deputy.planner.Transcript
+import deputy.planner.Transcript.Step
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,28 +38,21 @@ import kotlin.time.Clock
 class StubPlanner(
     private val port: AgentPort,
     private val zone: TimeZone,
+    override val transcript: Transcript,
+    override val name: String = "scripted",
     private val clock: Clock = Clock.System,
-) {
-    data class Step(val kind: Kind, val text: String, val detail: String? = null) {
-        enum class Kind { USER, SAYS, PROPOSES, BROKER }
-    }
-
-    private val _transcript = MutableStateFlow<List<Step>>(emptyList())
-    val transcript: StateFlow<List<Step>> = _transcript.asStateFlow()
+) : Planner {
     private val _busy = MutableStateFlow(false)
-    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+    override val busy: StateFlow<Boolean> = _busy.asStateFlow()
     private val running = Mutex()
 
-    val suggestions = listOf(
+    override val suggestions = listOf(
         "Find a time with Dana next week",
         "Send Dana an invite",
-        "Try to break the rules",
     )
 
-    fun clear() { _transcript.value = emptyList() }
-
-    /** Routes a typed request. There is no language model in Phase 0, so this is keyword matching. */
-    suspend fun handle(request: String) = run(request) {
+    /** Routes a typed request by keyword. Used when no API key is configured. */
+    override suspend fun handle(request: String) = run(request) {
         val text = request.lowercase()
         val who = Regex("""with (\w+)""").find(text)?.groupValues?.get(1)
             ?: Regex("""send (\w+)""").find(text)?.groupValues?.get(1)?.takeIf { it != "an" && it != "a" }
@@ -193,5 +189,5 @@ class StubPlanner(
     }
 
     private fun say(text: String) = log(Step.Kind.SAYS, text)
-    private fun log(kind: Step.Kind, text: String, detail: String? = null) { _transcript.value = _transcript.value + Step(kind, text, detail) }
+    private fun log(kind: Step.Kind, text: String, detail: String? = null) = transcript.log(Step(kind, text, detail, source = name))
 }

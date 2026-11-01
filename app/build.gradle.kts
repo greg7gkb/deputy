@@ -62,6 +62,7 @@ kotlin {
 
 dependencies {
     implementation(project(":broker"))
+    implementation(project(":planner"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

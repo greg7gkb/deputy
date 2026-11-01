@@ -77,7 +77,7 @@ fun KeyringScreen(app: DeputyApp, snapshot: BrokerSnapshot) {
                 )
             }
         }
-        items(active, key = { it.grantId.value }) { KeyCard(it, Actors.label(it.holderPrincipal, app.lab), revoking = it.grantId in revoking, onRevoke = { revoke(it.grantId) }) }
+        items(active, key = { it.grantId.value }) { KeyCard(it, Actors.label(it.holderPrincipal, app), revoking = it.grantId in revoking, onRevoke = { revoke(it.grantId) }) }
         item {
             Column {
                 SectionLabel("Add a key")
@@ -99,7 +99,7 @@ fun KeyringScreen(app: DeputyApp, snapshot: BrokerSnapshot) {
                     modifier = Modifier.clickable { showEnded = !showEnded }.padding(top = 10.dp, bottom = 2.dp),
                 )
             }
-            if (showEnded) items(ended, key = { it.grantId.value }) { KeyCard(it, Actors.label(it.holderPrincipal, app.lab), revoking = false, onRevoke = {}) }
+            if (showEnded) items(ended, key = { it.grantId.value }) { KeyCard(it, Actors.label(it.holderPrincipal, app), revoking = false, onRevoke = {}) }
         }
     }
 }

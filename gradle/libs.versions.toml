@@ -6,6 +6,8 @@ kotlin = "2.4.21"
 coroutines = "1.11.0"
 serialization = "1.11.0"
 datetime = "0.8.0"
+# Cloud planner (Phase 1)
+anthropic = "3.3.0"
 # Android app
 coreKtx = "1.19.1"
 activityCompose = "1.13.0"
@@ -17,6 +19,7 @@ kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-c
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
+anthropic-java = { module = "com.anthropic:anthropic-java", version.ref = "anthropic" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }

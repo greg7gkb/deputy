@@ -24,13 +24,13 @@ class DebugDriver : BroadcastReceiver() {
                     "seed" -> app.lab.seedCalendar()
                     "pair_zane" -> app.lab.pairZane()
                     "ask" -> { app.scope.launch { app.planner.handle(intent.getStringExtra("text") ?: "") }; "started" }
-                    "probe" -> { app.scope.launch { app.planner.probeLimitsWithLeakedHandle(app.lab.zaneGrantId()) }; "started" }
+                    "probe" -> { app.scope.launch { app.runProbe() }; "started" }
                     "zane_tue" -> app.lab.zaneAsks(DayOfWeek.TUESDAY, 19)
                     "zane_wed" -> app.lab.zaneAsks(DayOfWeek.WEDNESDAY, 19)
                     "zane_sat" -> app.lab.zaneAsks(DayOfWeek.SATURDAY, 14)
                     "stranger" -> app.lab.strangerAsks()
                     "zane_week" -> app.lab.zaneAsksAllWeek()
-                    "dump" -> app.planner.transcript.value.joinToString("\n") { "${it.kind}: ${it.text}" }
+                    "dump" -> app.transcript.steps.value.joinToString("\n") { "${it.kind}: ${it.text}" }
                     else -> "unknown cmd $cmd"
                 }
                 Log.i(TAG, "$cmd -> $result")

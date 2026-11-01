@@ -215,7 +215,10 @@ not.
 - Which card issuer actually offers an API for capped single-use cards (decides
   whether scenario 2's authority piece is real or mocked).
 - Whether the on-device model API is available on the target phone (ML Kit GenAI
-  Prompt / Gemini Nano on Pixel, or Gemma 3n as the prototyping fallback).
+  Prompt / Gemini Nano on Pixel, or Gemma 3n as the prototyping fallback). Working
+  assumption: not on a Pixel 7, so Gemma 3n. The reader slot it fills is built and
+  tested with a rule-based reader in its place (`decisions.md` D26), which also showed
+  the containment argument doesn't depend on the reader's quality.
 - ~~How the target Android version handles one-time-code redaction for notification
   listeners (how much secret-labelling comes for free).~~ Answered for Android 15 (API 35)
   on an emulator: a lot, and more than wanted. See section 8.

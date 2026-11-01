@@ -71,6 +71,7 @@ class StubPlanner(
     private suspend fun run(request: String, block: suspend () -> Unit) {
         running.withLock {
             _busy.value = true
+            transcript.newConversation()  // the script has no memory: every request stands alone
             log(Step.Kind.USER, request)
             try { block() } catch (e: Exception) { say("Something went wrong: ${e.message}") } finally { _busy.value = false }
         }

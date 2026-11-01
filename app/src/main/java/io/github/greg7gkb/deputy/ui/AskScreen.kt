@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
@@ -64,21 +65,26 @@ fun AskScreen(
     var text by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
 
+    /** The top box and the suggestions always start something new. */
     fun send(request: String) {
         val r = request.trim()
         if (r.isEmpty() || busy) return
         text = ""
-        app.act({ if (r == PROBE_SUGGESTION) app.runProbe() else app.planner.handle(r) })
+        app.act({
+            if (r == PROBE_SUGGESTION) app.runProbe() else { app.planner.reset(); app.planner.handle(r) }
+        })
+    }
+
+    /** The reply box under Claude's last message continues that conversation. */
+    fun reply(message: String) {
+        val r = message.trim()
+        if (r.isEmpty() || busy) return
+        app.act({ app.planner.handle(r) })
     }
 
     // One card per request, newest first (the same order as Keyring and Activity); steps read
     // top to bottom inside each card.
-    val runs = remember(transcript) {
-        transcript.fold(mutableListOf<List<Step>>()) { acc, step ->
-            if (step.kind == Step.Kind.USER || acc.isEmpty()) acc += listOf(step) else acc[acc.lastIndex] = acc.last() + step
-            acc
-        }.reversed()
-    }
+    val runs = remember(transcript) { transcript.groupBy { it.conversation }.values.toList().reversed() }
     // The newest request is the first card; keep it in view as it fills in.
     val firstRun = 4 + (if (calendarGranted) 0 else 1)
     LaunchedEffect(runs.size) {
@@ -98,7 +104,10 @@ fun AskScreen(
                     modifier = Modifier.padding(top = 2.dp),
                 )
                 VSpace(8.dp)
-                AskInput(text, onChange = { text = it }, enabled = !busy, onSend = { send(text) })
+                AskInput(
+                    text, onChange = { text = it }, enabled = !busy, onSend = { send(text) },
+                    placeholder = if (app.planner.inConversation) "Start a new request…" else "Find a time with Dana…",
+                )
             }
         }
         item { Suggestions(app.planner.suggestions + PROBE_SUGGESTION, enabled = !busy, onPick = ::send) }
@@ -108,7 +117,11 @@ fun AskScreen(
                 if (transcript.isNotEmpty() && !busy) SmallButton("New conversation", onClick = { app.transcript.clear(); app.planner.reset() })
             }
         }
-        itemsIndexed(runs) { i, run -> RunCard(run, working = busy && i == 0) }
+        itemsIndexed(runs) { i, run ->
+            // Only the newest conversation can be continued, and only once the assistant has answered.
+            val canReply = i == 0 && !busy && app.planner.inConversation && run.any { it.source == app.planner.name }
+            RunCard(run, working = busy && i == 0, onReply = if (canReply) ::reply else null)
+        }
         item { TodayCard(snapshot, items, onSeeActivity) }
     }
 }
@@ -156,12 +169,12 @@ private fun CalendarBanner(onRequest: () -> Unit) {
 }
 
 @Composable
-private fun AskInput(text: String, onChange: (String) -> Unit, enabled: Boolean, onSend: () -> Unit) {
+private fun AskInput(text: String, onChange: (String) -> Unit, enabled: Boolean, onSend: () -> Unit, placeholder: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = text,
             onValueChange = onChange,
-            placeholder = { Text("Find a time with Dana…", color = Color(0xFF8A8B8E), fontSize = 14.sp) },
+            placeholder = { Text(placeholder, color = Color(0xFF8A8B8E), fontSize = 14.sp) },
             singleLine = true,
             textStyle = Type.Body,
             shape = RoundedCornerShape(12.dp),
@@ -222,7 +235,7 @@ private fun actorOf(step: Step): String? = when (step.kind) {
 
 /** One request and everything that followed it, with a caption whenever the actor changes. */
 @Composable
-private fun RunCard(run: List<Step>, working: Boolean) {
+private fun RunCard(run: List<Step>, working: Boolean, onReply: ((String) -> Unit)? = null) {
     DCard(padding = 12.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             run.forEachIndexed { i, step ->
@@ -234,6 +247,11 @@ private fun RunCard(run: List<Step>, working: Boolean) {
                 StepView(step)
             }
             if (working) Text("working…", style = Type.Mono)
+            if (onReply != null) {
+                var reply by rememberSaveable { mutableStateOf("") }
+                Spacer(Modifier.height(4.dp))
+                AskInput(reply, onChange = { reply = it }, enabled = true, onSend = { onReply(reply); reply = "" }, placeholder = "Reply to Claude…")
+            }
         }
     }
 }

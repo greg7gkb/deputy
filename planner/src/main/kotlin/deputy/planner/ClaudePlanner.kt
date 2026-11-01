@@ -71,14 +71,15 @@ class ClaudePlanner(
     private var exchange = 0
 
     override fun reset() { history.clear(); lastRequestAt = null }
+    override val inConversation get() = history.isNotEmpty()
 
     override suspend fun handle(request: String) = running.withLock {
         _busy.value = true
-        log(Step.Kind.USER, request)
         try {
             val now = clock.now()
             if (lastRequestAt?.let { now - it > IDLE_RESET } == true) reset()
-            if (history.isNotEmpty()) log(Step.Kind.INFO, "continuing the conversation")
+            if (history.isEmpty()) transcript.newConversation()
+            log(Step.Kind.USER, request)
             lastRequestAt = now
             if (!converse(request)) reset()
         } catch (e: AnthropicServiceException) {

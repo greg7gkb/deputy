@@ -260,9 +260,13 @@ invite's description goes to every attendee, so invites get an id and the link s
 Deputy's side. The app accepts only well-formed links (`Artifacts.parse`), and opening one
 only *shows* an entry; a link can never act.
 
-Assumption to test: Google Calendar may not make a custom-scheme link tappable. If it doesn't,
-the fix is an https App Link on a domain the user controls (e.g. a GitHub Pages site serving
-`/.well-known/assetlinks.json`), with the same path shape.
+Tested: Google Calendar shows a `deputy://` link as plain text. So links are written as https
+App Links, `https://greg7gkb.github.io/deputy/activity/<id>`, verified by
+`/.well-known/assetlinks.json` in the `greg7gkb.github.io` repo (package name plus the signing
+certificate's public SHA-256). Android reports the domain as verified on the Pixel. The host and
+path are build configuration (`app/build.gradle.kts`), so a fork can point at its own domain;
+signing with a different key means adding its fingerprint to assetlinks.json. Someone without
+the app who opens a link gets a 404 page explaining what it is. `deputy://` is still accepted.
 
 Also in this change: a `Principal`'s identity is its kind and id, not its display name, so
 relabelling an actor ("Assistant (scripted)") can never move authority. And every screen now

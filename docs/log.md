@@ -8,6 +8,19 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 (night) — Links back from what Deputy creates
+
+- Feedback from the first run on the Pixel: a hold in Google Calendar should link back to
+  Deputy. Built generically (D19): every created artifact gets an id, holds carry a link in
+  their description, and Activity opens at that entry with Undo and "Open in Calendar".
+- Google Calendar rendered `deputy://activity/...` as plain text: custom schemes aren't
+  linkified. Switched to https App Links on `greg7gkb.github.io`, which needed a fresh user
+  site repo serving `/.well-known/assetlinks.json` (the old one, a friend's portfolio, is
+  archived as `prince-website-2022`). Android verified the domain on the phone.
+- Also from that feedback: every screen reads newest first, each Ask request is its own card,
+  and every step and log entry names its actor (You, Assistant (scripted), Deputy, Zane
+  (simulated)), because mixing real parts with stand-ins was confusing.
+
 ## 2026-10-31 (late) — What a notification listener sees on Android 15
 
 - Added a bare NotificationListenerService (tier 1, the planned Phase 1 triage adapter) that

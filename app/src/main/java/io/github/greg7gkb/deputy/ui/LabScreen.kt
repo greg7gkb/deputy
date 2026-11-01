@@ -84,7 +84,8 @@ fun LabScreen(app: DeputyApp, snapshot: BrokerSnapshot, log: SnapshotStateList<S
                 ScreenHeader("Lab", "Simulations. The askers are pretend; the broker answering them is real.")
                 Text(
                     "Deputy ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) · assistant: ${app.planner.name}" +
-                        ((app.planner as? ClaudePlanner)?.let { " (${it.model})" } ?: ""),
+                        ((app.planner as? ClaudePlanner)?.let { " (${it.model})" } ?: "") +
+                        "\nwrites to: " + (app.calendarAdapter.writableCalendarId()?.second ?: "no \"${BuildConfig.WRITE_CALENDAR}\" calendar yet"),
                     style = Type.Mono,
                     modifier = Modifier.padding(top = 2.dp),
                 )

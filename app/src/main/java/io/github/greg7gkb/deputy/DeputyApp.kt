@@ -1,6 +1,7 @@
 package io.github.greg7gkb.deputy
 
 import android.app.Application
+import android.util.Log
 import deputy.broker.Artifacts
 import deputy.broker.Broker
 import deputy.broker.FileFactStore
@@ -37,7 +38,18 @@ class DeputyApp : Application() {
         probe.probeLimitsWithLeakedHandle(lab.zaneGrantId())
     }
 
+    /**
+     * Every Claude request and response, as JSON, to logcat under [LLM_TAG] (D21). Debug builds
+     * only; logcat lines are capped near 4 KB, so long messages are split and numbered.
+     */
+    private fun logWire(message: String) {
+        val parts = message.chunked(3_500)
+        parts.forEachIndexed { i, part -> Log.d(LLM_TAG, if (parts.size == 1) part else "[${i + 1}/${parts.size}] $part") }
+    }
+
     companion object {
+        const val LLM_TAG = "DeputyLLM"
+
         /** The rule-breaking script's identity. Never the assistant's. */
         val PROBE = Principal(Principal.Kind.ASSISTANT, "scripted-test", "Scripted test")
 
@@ -55,6 +67,7 @@ class DeputyApp : Application() {
     lateinit var probe: StubPlanner
         private set
     val transcript = Transcript()
+    val calendarAdapter by lazy { AndroidCalendarAdapter(this, BuildConfig.WRITE_CALENDAR) }
     lateinit var lab: Lab
         private set
 
@@ -66,12 +79,15 @@ class DeputyApp : Application() {
         broker = Broker(
             journalStorage = FileJournalStorage(File(dir, "journal.tsv")),
             facts = FileFactStore(File(dir, "facts.json")),
-            calendar = AndroidCalendarAdapter(this),
+            calendar = calendarAdapter,
             linkBase = WEB_LINK_BASE,
         )
         val assistant = broker.agentPort(Principal.Assistant)
         planner = if (BuildConfig.ANTHROPIC_API_KEY.isNotEmpty()) {
-            ClaudePlanner(assistant, AnthropicOkHttpClient.builder().apiKey(BuildConfig.ANTHROPIC_API_KEY).build(), broker.zone, transcript)
+            ClaudePlanner(
+                assistant, AnthropicOkHttpClient.builder().apiKey(BuildConfig.ANTHROPIC_API_KEY).build(), broker.zone, transcript,
+                wireLog = if (BuildConfig.DEBUG) ::logWire else null,
+            )
         } else {
             StubPlanner(assistant, broker.zone, transcript)
         }

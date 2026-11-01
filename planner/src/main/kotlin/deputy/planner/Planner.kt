@@ -31,4 +31,6 @@ interface Planner {
     val busy: StateFlow<Boolean>
     val suggestions: List<String>
     suspend fun handle(request: String)
+    /** Forget the conversation so the next request starts fresh. */
+    fun reset() {}
 }

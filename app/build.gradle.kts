@@ -33,6 +33,11 @@ android {
         manifestPlaceholders["linkHost"] = "greg7gkb.github.io"
         manifestPlaceholders["linkPath"] = "/deputy/activity/"
 
+        // Holds and invites are written only to a calendar with this display name (D22). Reading
+        // busy times still covers every visible calendar, so availability stays real.
+        val writeCalendar = localProps.getProperty("deputy.writeCalendar", "Deputy sandbox")
+        buildConfigField("String", "WRITE_CALENDAR", "\"$writeCalendar\"")
+
         // The cloud planner's key (D20). Empty or the placeholder means "no planner configured".
         val apiKey = localProps.getProperty("anthropic.apiKey", "").takeUnless { it.startsWith("REPLACE_") }.orEmpty()
         buildConfigField("String", "ANTHROPIC_API_KEY", "\"$apiKey\"")

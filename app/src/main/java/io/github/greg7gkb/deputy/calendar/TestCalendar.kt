@@ -79,7 +79,31 @@ object TestCalendar {
                 else -> Unit
             }
         }
+        ensureSandbox(context)
         count
+    }
+
+    /**
+     * The emulator has no Google account, so give it a device-only "Deputy sandbox" to write to.
+     * Skipped when a calendar of that name already exists (on a phone, the Google one).
+     */
+    private fun ensureSandbox(context: Context) {
+        val name = io.github.greg7gkb.deputy.BuildConfig.WRITE_CALENDAR
+        val exists = context.contentResolver.query(Calendars.CONTENT_URI, arrayOf(Calendars._ID),
+            "${Calendars.CALENDAR_DISPLAY_NAME} = ?", arrayOf(name), null)?.use { it.count > 0 } ?: false
+        if (exists) return
+        context.contentResolver.insert(asSyncAdapter(Calendars.CONTENT_URI), ContentValues().apply {
+            put(Calendars.ACCOUNT_NAME, ACCOUNT)
+            put(Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            put(Calendars.NAME, name)
+            put(Calendars.CALENDAR_DISPLAY_NAME, name)
+            put(Calendars.CALENDAR_COLOR, 0xFF2B4A78.toInt())
+            put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_OWNER)
+            put(Calendars.OWNER_ACCOUNT, ACCOUNT)
+            put(Calendars.VISIBLE, 1)
+            put(Calendars.SYNC_EVENTS, 1)
+            put(Calendars.CALENDAR_TIME_ZONE, ZoneId.systemDefault().id)
+        })
     }
 
     private fun findCalendar(context: Context): Long? =

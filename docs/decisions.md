@@ -289,3 +289,27 @@ results (e.g. three open slots). Never titles, message content, codes or credent
   bounded and can be revoked without touching anything else. Upgrade path: enter the key in the
   app and keep it in the Android Keystore, or put a small relay in front that holds it.
 - **The model never holds the key.** The app makes the API call; the model only proposes.
+
+## D21. Every Claude exchange is logged in debug builds (default)
+
+Debug builds write each request and response, as the JSON that goes over the wire, to logcat
+under the tag `DeputyLLM` (long messages split into numbered parts). Purpose: being able to see
+exactly what the planner was told and what it said. It contains the request text, the system
+prompt and tools, key ids, and the free times Deputy returned; never the API key (it travels in a
+header, which isn't logged) and never calendar titles (the planner never has them). Logcat is
+readable only over adb, and it's a ring buffer, so old entries roll off. Release builds don't log.
+
+## D22. Deputy writes only to a calendar named "Deputy sandbox" (default)
+
+Holds and invites go only to a writable calendar with the display name in
+`deputy.writeCalendar` (local.properties, default "Deputy sandbox"), preferring an account
+calendar over a device-only one; if none exists, the write fails with a message saying how to
+create it, rather than falling back to the primary calendar. Reading busy times still covers
+every visible calendar, so availability is real. Cleanup is deleting one calendar. On the
+emulator, seeding the test calendar also creates a device-only "Deputy sandbox".
+
+Not yet tested: whether an invite with attendees, created in a Google calendar through
+CalendarContract, makes Google email the attendees once it syncs.
+
+Conversations: the Claude planner now keeps the conversation between requests (so "Monday,
+please" works), append-only, until "New conversation", 30 idle minutes, or an error.

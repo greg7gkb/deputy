@@ -2,6 +2,7 @@ package deputy.planner
 
 import com.anthropic.client.AnthropicClient
 import com.anthropic.core.JsonValue
+import com.anthropic.core.jsonMapper
 import com.anthropic.errors.AnthropicServiceException
 import com.anthropic.errors.AnthropicIoException
 import com.anthropic.models.messages.CacheControlEphemeral
@@ -44,6 +45,8 @@ class ClaudePlanner(
     private val clock: Clock = Clock.System,
     val model: String = DEFAULT_MODEL,
     private val maxTurns: Int = 12,
+    /** Receives every request and response as JSON, for debugging (D21). Never sees the API key. */
+    private val wireLog: ((String) -> Unit)? = null,
 ) : Planner {
     override val name = "Claude"
     override val suggestions = listOf(
@@ -56,27 +59,45 @@ class ClaudePlanner(
     override val busy: StateFlow<Boolean> = _busy.asStateFlow()
     private val running = Mutex()
 
+    /**
+     * The conversation so far, so a follow-up ("Monday, please") has context. Append-only, as
+     * preserved thinking requires; it starts over on [reset], after [IDLE_RESET] without a
+     * request, or after anything leaves it half-finished.
+     */
+    private val history = mutableListOf<MessageParam>()
+    private var lastRequestAt: kotlin.time.Instant? = null
+    private var exchange = 0
+
+    override fun reset() { history.clear(); lastRequestAt = null }
+
     override suspend fun handle(request: String) = running.withLock {
         _busy.value = true
         log(Step.Kind.USER, request)
         try {
-            converse(request)
+            val now = clock.now()
+            if (lastRequestAt?.let { now - it > IDLE_RESET } == true) reset()
+            if (history.isNotEmpty()) log(Step.Kind.INFO, "continuing the conversation")
+            lastRequestAt = now
+            if (!converse(request)) reset()
         } catch (e: AnthropicServiceException) {
-            log(Step.Kind.INFO, "Claude API error ${e.statusCode()}: ${e.message?.take(200)}")
+            reset()
+            log(Step.Kind.INFO, "Claude API error ${e.statusCode()}: ${e.message?.take(200)}. Starting a fresh conversation.")
         } catch (e: AnthropicIoException) {
-            log(Step.Kind.INFO, "Couldn't reach the Claude API: ${e.message?.take(200)}")
+            reset()
+            log(Step.Kind.INFO, "Couldn't reach the Claude API: ${e.message?.take(200)}. Starting a fresh conversation.")
         } finally {
             _busy.value = false
         }
     }
 
-    private suspend fun converse(request: String) {
+    /** Returns true if the conversation ended cleanly and can be continued. */
+    private suspend fun converse(request: String): Boolean {
         // The date line goes in the user turn, not the system prompt, so the system prompt and
         // tools stay byte-identical across requests and cache.
         val now = clock.now().toLocalDateTime(zone)
-        val messages = mutableListOf(
-            MessageParam.ofUser("Now: ${now.dayOfWeek.name.lowercase()} ${now.toString().take(16)} in $zone.\n\n$request"),
-        )
+        val messages = history
+        messages += MessageParam.ofUser("Now: ${now.dayOfWeek.name.lowercase()} ${now.toString().take(16)} in $zone.\n\n$request")
+        exchange++
         var inputTokens = 0L
         var outputTokens = 0L
         var cachedTokens = 0L
@@ -95,7 +116,9 @@ class ClaudePlanner(
                 .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
                 .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
                 .build()
+            wireLog?.invoke("→ exchange $exchange, round ${it + 1}, request: " + jsonMapper().writeValueAsString(params._body()))
             val response = withContext(Dispatchers.IO) { client.messages().create(params) }
+            wireLog?.invoke("← exchange $exchange, round ${it + 1}, response: " + jsonMapper().writeValueAsString(response))
             inputTokens += response.usage().inputTokens() + response.usage().cacheReadInputTokens().orElse(0L) +
                 response.usage().cacheCreationInputTokens().orElse(0L)
             cachedTokens += response.usage().cacheReadInputTokens().orElse(0L)
@@ -110,12 +133,13 @@ class ClaudePlanner(
                     val results = response.content().mapNotNull { it.toolUse().orElse(null) }.map { execute(it) }
                     messages += MessageParam.ofUserOfContentBlockParams(results)
                 }
-                StopReason.REFUSAL -> return finish("Claude declined this request.", inputTokens, outputTokens, cachedTokens)
-                StopReason.MAX_TOKENS -> return finish("Claude ran out of room before finishing.", inputTokens, outputTokens, cachedTokens)
-                else -> return finish(null, inputTokens, outputTokens, cachedTokens)
+                StopReason.REFUSAL -> { finish("Claude declined this request.", inputTokens, outputTokens, cachedTokens); return false }
+                StopReason.MAX_TOKENS -> { finish("Claude ran out of room before finishing.", inputTokens, outputTokens, cachedTokens); return false }
+                else -> { finish(null, inputTokens, outputTokens, cachedTokens); return true }
             }
         }
         finish("Stopped after $maxTurns rounds without finishing.", inputTokens, outputTokens, cachedTokens)
+        return false
     }
 
     /** One tool call, through the broker. Waits for the user when the broker asks them. */
@@ -177,6 +201,7 @@ class ClaudePlanner(
 
     companion object {
         const val DEFAULT_MODEL = "claude-sonnet-5-5"
+        val IDLE_RESET = kotlin.time.Duration.parse("30m")
 
         val SYSTEM_PROMPT = """
             You are the planning half of Deputy, an app on the user's Android phone. You turn the user's request into calls to the tools you have. You cannot act on your own: every tool call goes to Deputy's broker, plain code that checks it against a key the user approved, asks the user first when an action can't be undone, and refuses anything outside a key's limits. The user sees every call and every refusal.
@@ -187,7 +212,7 @@ class ClaudePlanner(
 
             You only ever see free times, never what the user is busy with, and that is by design. Times you send and receive are local to the user, as YYYY-MM-DDTHH:MM. Working hours mean 9:00 to 17:00 unless the user says otherwise.
 
-            When you're done, reply in one or two short sentences: what you did, or what stopped you. No preamble, and no markdown.
+            The user can reply to you, so if you need a choice from them, ask for it and stop. When you're done, reply in one or two short sentences: what you did, or what stopped you. Plain sentences, no lists or markdown, because the reply is shown as plain text on a phone.
         """.trimIndent()
     }
 }

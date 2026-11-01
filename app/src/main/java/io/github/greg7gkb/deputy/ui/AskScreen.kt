@@ -105,7 +105,7 @@ fun AskScreen(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionLabel(if (transcript.isEmpty()) "Nothing asked yet" else "Requests, newest first", Modifier.weight(1f))
-                if (transcript.isNotEmpty() && !busy) SmallButton("Clear", onClick = { app.transcript.clear() })
+                if (transcript.isNotEmpty() && !busy) SmallButton("New conversation", onClick = { app.transcript.clear(); app.planner.reset() })
             }
         }
         itemsIndexed(runs) { i, run -> RunCard(run, working = busy && i == 0) }

@@ -5,6 +5,7 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
+import android.provider.CalendarContract
 import android.provider.CalendarContract.Attendees
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
@@ -23,7 +24,11 @@ import kotlin.time.Instant
  * descriptions, locations and attendees are never read, so they cannot leak however the
  * broker or a future planner misbehaves (docs/decisions.md D9).
  */
-class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
+class AndroidCalendarAdapter(
+    private val context: Context,
+    /** Writes go only to a calendar with this display name (D22). Never falls back to another. */
+    private val writeCalendarName: String,
+) : CalendarAdapter {
     override val source = "Calendar on this phone"
 
     override suspend fun readBusy(window: Interval): List<Interval> = withContext(Dispatchers.IO) {
@@ -74,7 +79,8 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
 
     private fun insertEvent(slot: Interval, title: String, availability: Int, attendees: List<String>, note: String?): String {
         requirePermission(Manifest.permission.WRITE_CALENDAR)
-        val calendarId = writableCalendarId() ?: error("no writable calendar on this phone")
+        val calendarId = writableCalendarId()?.first
+            ?: error("There's no calendar named \"$writeCalendarName\" on this phone. Create it in Google Calendar, let it sync, and try again.")
         val values = ContentValues().apply {
             put(Events.CALENDAR_ID, calendarId)
             put(Events.DTSTART, slot.start.toEpochMilliseconds())
@@ -99,19 +105,20 @@ class AndroidCalendarAdapter(private val context: Context) : CalendarAdapter {
         return eventId.toString()
     }
 
-    /** The primary calendar the user can write to, else the first writable visible one. */
-    private fun writableCalendarId(): Long? {
-        val projection = arrayOf(Calendars._ID, Calendars.IS_PRIMARY)
-        val selection = "${Calendars.VISIBLE} = 1 AND ${Calendars.CALENDAR_ACCESS_LEVEL} >= ${Calendars.CAL_ACCESS_CONTRIBUTOR}"
-        context.contentResolver.query(Calendars.CONTENT_URI, projection, selection, null, null)?.use { c ->
-            var first: Long? = null
-            while (c.moveToNext()) {
-                if (first == null) first = c.getLong(0)
-                if (!c.isNull(1) && c.getInt(1) == 1) return c.getLong(0)
-            }
-            return first
+    /**
+     * The calendar Deputy may write to: the writable, visible one named [writeCalendarName],
+     * preferring an account calendar over a device-only one. Returns its id and a description.
+     */
+    fun writableCalendarId(): Pair<Long, String>? {
+        if (context.checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) return null
+        val projection = arrayOf(Calendars._ID, Calendars.ACCOUNT_NAME, Calendars.ACCOUNT_TYPE)
+        val selection = "${Calendars.VISIBLE} = 1 AND ${Calendars.CALENDAR_ACCESS_LEVEL} >= ${Calendars.CAL_ACCESS_CONTRIBUTOR} AND ${Calendars.CALENDAR_DISPLAY_NAME} = ?"
+        val found = mutableListOf<Triple<Long, String, Boolean>>()
+        context.contentResolver.query(Calendars.CONTENT_URI, projection, selection, arrayOf(writeCalendarName), null)?.use { c ->
+            while (c.moveToNext()) found += Triple(c.getLong(0), c.getString(1).orEmpty(), c.getString(2) == CalendarContract.ACCOUNT_TYPE_LOCAL)
         }
-        return null
+        val pick = found.sortedBy { it.third }.firstOrNull() ?: return null
+        return pick.first to "$writeCalendarName (" + (if (pick.third) "on this phone only" else pick.second) + ")"
     }
 
     private fun requirePermission(permission: String) {

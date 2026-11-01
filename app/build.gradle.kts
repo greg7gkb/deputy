@@ -21,8 +21,10 @@ android {
         applicationId = "io.github.greg7gkb.deputy"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1"
+        // Versioning (CLAUDE.md): bump versionName for each milestone and versionCode on every
+        // build installed on a phone (Android refuses an update with a lower code). Tag the commit vX.Y.
+        versionCode = 2
+        versionName = "0.2"
 
         // Links Deputy writes into what it creates (D19). An https App Link, verified by
         // /.well-known/assetlinks.json on this host, so calendar apps make it tappable.

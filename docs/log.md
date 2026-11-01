@@ -8,6 +8,12 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 — Version 0.2
+
+- Started versioning the app: 0.1 (tagged retroactively) was Phase 0 end to end; 0.2 adds the
+  Claude planner, links back from what Deputy creates, and the first feedback round. The Lab
+  screen shows the running version. Convention in `CLAUDE.md`.
+
 ## 2026-10-31 (late night) — A real planner: Claude
 
 - New `planner/` module (pure Kotlin/JVM): `ClaudePlanner` drives `claude-sonnet-5-5` through the

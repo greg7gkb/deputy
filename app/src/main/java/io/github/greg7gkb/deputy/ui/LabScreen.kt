@@ -24,6 +24,8 @@ import deputy.broker.present.FactsView
 import deputy.broker.InboundAnswer
 import deputy.broker.Provenance
 import deputy.broker.present.Format
+import io.github.greg7gkb.deputy.BuildConfig
+import deputy.planner.ClaudePlanner
 import io.github.greg7gkb.deputy.DeputyApp
 import kotlinx.datetime.DayOfWeek
 import java.time.LocalTime
@@ -77,7 +79,17 @@ fun LabScreen(app: DeputyApp, snapshot: BrokerSnapshot, log: SnapshotStateList<S
     )
 
     ScreenColumn {
-        item { ScreenHeader("Lab", "Simulations for Phase 0. The askers are pretend; the broker answering them is real.") }
+        item {
+            Column {
+                ScreenHeader("Lab", "Simulations. The askers are pretend; the broker answering them is real.")
+                Text(
+                    "Deputy ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) · assistant: ${app.planner.name}" +
+                        ((app.planner as? ClaudePlanner)?.let { " (${it.model})" } ?: ""),
+                    style = Type.Mono,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
         item { SimGroup("Calendar", calendar) }
         item { SimGroup("Someone else's Deputy asks", inbound) }
         item { SimGroup("Planner", planner) }

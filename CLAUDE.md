@@ -40,6 +40,17 @@ Commands are listed in `app/src/debug/.../DebugDriver.kt`; results go to logcat 
 `DeputyDriver`. It deliberately cannot approve, decline or revoke: those need a real tap
 (use `adb shell input tap` against a `uiautomator dump`).
 
+## Versioning
+
+- The Android app's version lives in `app/build.gradle.kts`: `versionName` is `MAJOR.MINOR`
+  (0.x while the project is a prototype), `versionCode` is an integer that only goes up.
+- Bump `versionName` for each milestone worth naming, and `versionCode` for every build that gets
+  installed on a real phone (Android refuses to update to a lower code).
+- Tag the milestone commit `vX.Y` and add a line to `docs/log.md`. The Lab screen shows the
+  running version.
+- History: 0.1 was Phase 0 end to end (broker, Keyring, kill switch, calendar adapter). 0.2 adds
+  the Claude planner, links back from what Deputy creates, and the feedback round.
+
 ## Commits
 
 - The repo is public. Never put Claude session links in commit messages or tracked

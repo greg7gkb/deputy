@@ -197,3 +197,25 @@ class ArtifactTest {
         assertTrue(Principal.peer("zane", "Zane") != Principal(Principal.Kind.ASSISTANT, "zane", "Zane"))
     }
 }
+
+class CancelInviteTest {
+    @Test fun `you can cancel an invite Deputy sent, once, and the assistant cannot`() = runTest {
+        val rig = Rig()
+        val key = rig.calendarKey(GrantTemplates.sendInvites(listOf("dana@example.com")))
+        val asked = assertIs<Outcome.AwaitingUser>(rig.agent.propose(key, Action.SendInvite(at(MONDAY.plusDays(2), 10), 60, "Catch up", listOf("dana@example.com"))))
+        val sent = assertIs<Outcome.Done>(rig.user.approve(asked.requestId))
+        assertEquals(1, rig.calendar.events.size)
+        val artifact = rig.events().filterIsInstance<Event.ActionExecuted>().single().artifactId!!
+
+        assertEquals(Refusal.NO_PERMIT, assertIs<Outcome.Refused>(rig.agent.propose(key, Action.CancelInvite(artifact))).reason)
+        val item = Narrator.narrate(rig.broker.snapshots.value).first { it.seq == sent.seq }
+        assertEquals("Cancel invite", item.undoLabel)
+        assertNotNull(item.undoConfirm)
+
+        val cancelled = assertIs<Outcome.Done>(rig.user.undo(sent.seq))
+        assertIs<ActionResult.InviteCancelled>(cancelled.result)
+        assertTrue(rig.calendar.events.isEmpty())
+        assertIs<Outcome.Refused>(rig.user.undo(sent.seq))
+        assertNull(Narrator.narrate(rig.broker.snapshots.value).first { it.seq == sent.seq }.undoSeq)
+    }
+}

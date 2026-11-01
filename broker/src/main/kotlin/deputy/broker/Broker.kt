@@ -48,6 +48,11 @@ interface CalendarAdapter {
     suspend fun releaseHold(adapterRef: String)
     /** Attendees see this event, so there is no note; Deputy keeps the link on its own side. */
     suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String
+    /**
+     * Delete an event Deputy created, which tells its guests it's cancelled. Implementations must
+     * check the event still matches [slot] before deleting, and must not read its title.
+     */
+    suspend fun cancelEvent(adapterRef: String, slot: Interval)
 }
 
 /** What a proposer gets back. Serializable, so it is also the wire format for a remote planner. */
@@ -131,11 +136,16 @@ data class BrokerSnapshot(
     val integrityError: String?,
 )
 
+/** An invite Deputy sent and nobody has cancelled. */
+data class InviteRecord(val artifactId: String, val slot: Interval, val attendees: List<String>, val adapterRef: String)
+
 /** Broker state, derived by folding the journal. Never written any other way. */
 data class BrokerState(
     val grants: Map<GrantId, GrantRecord> = emptyMap(),
     val pending: Map<RequestId, Event.ApprovalRequested> = emptyMap(),
     val holds: Map<HoldId, HoldRecord> = emptyMap(),
+    /** Invites Deputy sent and nobody has cancelled, by artifact id. */
+    val invites: Map<String, InviteRecord> = emptyMap(),
     /** (asker id, when) for every answered inbound question; the weekly budget counts these. */
     val inboundAnswered: List<Pair<String, Instant>> = emptyList(),
     val undone: Set<Long> = emptySet(),
@@ -153,6 +163,10 @@ data class BrokerState(
             when (val r = e.result) {
                 is ActionResult.HoldPlaced -> s = s.copy(holds = s.holds + (r.holdId to HoldRecord(r.holdId, r.slot, e.adapterRef.orEmpty(), e.grantId)))
                 is ActionResult.HoldReleased -> s = s.copy(holds = s.holds - r.holdId)
+                is ActionResult.InviteSent -> if (e.artifactId != null) {
+                    s = s.copy(invites = s.invites + (e.artifactId to InviteRecord(e.artifactId, r.slot, r.attendees, e.adapterRef.orEmpty())))
+                }
+                is ActionResult.InviteCancelled -> s = s.copy(invites = s.invites - r.artifactId)
                 else -> Unit
             }
             if (e.undoOf != null) s = s.copy(undone = s.undone + e.undoOf)
@@ -365,12 +379,17 @@ class Broker(
             failClosed()?.let { return it }
             val entry = journal.entries.firstOrNull { it.seq == seq }
             val executed = entry?.event as? Event.ActionExecuted
-            val placed = executed?.result as? ActionResult.HoldPlaced
-            when {
-                placed == null -> Outcome.Refused(Refusal.OUT_OF_SCOPE, "that entry has no undo")
-                seq in state.undone || placed.holdId !in state.holds -> Outcome.Refused(Refusal.NOT_PENDING, "already undone")
-                // The user's own authority: no key needed, but it is journaled like anything else.
-                else -> execute(Principal.User, null, Action.ReleaseHold(placed.holdId), permit = null, undoOf = seq)
+            // The user's own authority: no key needed, but it is journaled like anything else.
+            when (val result = executed?.result) {
+                is ActionResult.HoldPlaced ->
+                    if (seq in state.undone || result.holdId !in state.holds) Outcome.Refused(Refusal.NOT_PENDING, "already undone")
+                    else execute(Principal.User, null, Action.ReleaseHold(result.holdId), permit = null, undoOf = seq)
+                is ActionResult.InviteSent -> {
+                    val id = executed.artifactId
+                    if (id == null || seq in state.undone || id !in state.invites) Outcome.Refused(Refusal.NOT_PENDING, "already cancelled")
+                    else execute(Principal.User, null, Action.CancelInvite(id), permit = null, undoOf = seq)
+                }
+                else -> Outcome.Refused(Refusal.OUT_OF_SCOPE, "that entry has no undo")
             }
         }
 
@@ -489,6 +508,13 @@ class Broker(
                     artifactId = newId("a")
                     adapterRef = adapterCall { calendar.createEvent(slot, action.title, action.attendees) }
                     ActionResult.InviteSent(slot, action.attendees)
+                }
+                is Action.CancelInvite -> {
+                    val invite = state.invites.getValue(action.artifactId)
+                    adapterCall { calendar.cancelEvent(invite.adapterRef, invite.slot) }
+                    adapterRef = invite.adapterRef
+                    artifactId = invite.artifactId
+                    ActionResult.InviteCancelled(invite.artifactId, invite.slot, invite.attendees)
                 }
             }
         } catch (e: Exception) {

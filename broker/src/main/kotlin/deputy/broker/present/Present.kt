@@ -52,6 +52,10 @@ data class ActivityItem(
     val tone: Tone,
     /** Non-null if the person can undo this entry; pass to UserPort.undo. */
     val undoSeq: Long? = null,
+    /** What the undo button says ("Undo", "Cancel invite"). */
+    val undoLabel: String = "Undo",
+    /** Non-null if undoing tells other people; the UI asks for a second tap and shows this. */
+    val undoConfirm: String? = null,
     /** Who did or asked this. Null means Deputy itself (reading the calendar, expiring requests). */
     val actor: Principal? = null,
     /** What this entry created outside Deputy, which links back here (deputy://activity/<id>). */
@@ -154,6 +158,8 @@ object Narrator {
         val grants = snapshot.grants.associateBy { it.grant.id }
         val requests = snapshot.entries.mapNotNull { it.event as? Event.ApprovalRequested }.associateBy { it.requestId }
         val activeHolds = snapshot.holds.map { it.holdId }.toSet()
+        val activeInvites = snapshot.entries.mapNotNull { (it.event as? Event.ActionExecuted)?.takeIf { e -> e.result is ActionResult.InviteSent }?.artifactId }.toSet() -
+            snapshot.entries.mapNotNull { ((it.event as? Event.ActionExecuted)?.result as? ActionResult.InviteCancelled)?.artifactId }.toSet()
         val zone = snapshot.zone
         return snapshot.entries.map { entry ->
             val e = entry.event
@@ -195,7 +201,7 @@ object Narrator {
                     "observed · ${e.source}", Tone.SYSTEM)
                 is Event.InboundAsked -> narrateInbound(entry.seq, e, time, grants, zone, snapshot.now)
             }
-            item.copy(actor = actorOf(e), artifactId = (e as? Event.ActionExecuted)?.artifactId, external = externalOf(e, activeHolds))
+            item.copy(actor = actorOf(e), artifactId = (e as? Event.ActionExecuted)?.artifactId, external = externalOf(e, activeHolds, activeInvites))
         }.reversed()
     }
 
@@ -210,12 +216,12 @@ object Narrator {
         is Event.ApprovalExpired, is Event.FactsRefreshed -> null
     }
 
-    private fun externalOf(e: Event, activeHolds: Set<deputy.broker.HoldId>): ExternalRef? {
+    private fun externalOf(e: Event, activeHolds: Set<deputy.broker.HoldId>, activeInvites: Set<String>): ExternalRef? {
         val executed = e as? Event.ActionExecuted ?: return null
         val ref = executed.adapterRef ?: return null
         return when (val r = executed.result) {
             is ActionResult.HoldPlaced -> if (r.holdId in activeHolds) ExternalRef(ExternalRef.Kind.CALENDAR_EVENT, ref) else null
-            is ActionResult.InviteSent -> ExternalRef(ExternalRef.Kind.CALENDAR_EVENT, ref)
+            is ActionResult.InviteSent -> if (executed.artifactId != null && executed.artifactId in activeInvites) ExternalRef(ExternalRef.Kind.CALENDAR_EVENT, ref) else null
             else -> null
         }
     }
@@ -234,8 +240,18 @@ object Narrator {
             }
             is ActionResult.HoldReleased -> ActivityItem(seq, e.at, time,
                 if (e.undoOf != null) "You undid a hold" else "Released a hold", "The calendar is back as it was.", footer, Tone.DONE)
-            is ActionResult.InviteSent -> ActivityItem(seq, e.at, time, "Sent an invite",
-                "${Format.slot(r.slot, zone, s.now)} to ${r.attendees.joinToString()}.", "asked first: permanent" + (key?.let { " · $it" } ?: ""), Tone.DONE)
+            is ActionResult.InviteSent -> {
+                val active = e.artifactId != null && seq !in s.undone && s.entries.none {
+                    ((it.event as? Event.ActionExecuted)?.result as? ActionResult.InviteCancelled)?.artifactId == e.artifactId
+                }
+                ActivityItem(seq, e.at, time, "Sent an invite",
+                    "${Format.slot(r.slot, zone, s.now)} to ${r.attendees.joinToString()}." + if (active) " You can cancel it; they'll be told." else "",
+                    "asked first: permanent" + (key?.let { " · $it" } ?: ""), Tone.DONE,
+                    undoSeq = if (active) seq else null, undoLabel = "Cancel invite",
+                    undoConfirm = "Tap again: cancel and notify ${r.attendees.size} ${if (r.attendees.size == 1) "person" else "people"}")
+            }
+            is ActionResult.InviteCancelled -> ActivityItem(seq, e.at, time, "You cancelled an invite",
+                "${Format.slot(r.slot, zone, s.now)} with ${r.attendees.joinToString()}. They were sent a cancellation.", footer, Tone.DONE)
         }
     }
 
@@ -290,6 +306,7 @@ object Narrator {
         is Action.PlaceHold -> "place a hold ${Format.slot(Interval.of(a.start, a.durationMinutes), zone, now)}, \"${a.label}\""
         is Action.ReleaseHold -> "release a hold"
         is Action.SendInvite -> "send \"${a.title}\" ${Format.slot(Interval.of(a.start, a.durationMinutes), zone, now)} to ${a.attendees.joinToString()}"
+        is Action.CancelInvite -> "cancel an invite"
     }
 
     private fun shortWhat(a: Action) = Capabilities.spec(a.capability)?.title?.lowercase() ?: a.capability.value

@@ -175,6 +175,7 @@ class StubPlanner(
             is ActionResult.HoldPlaced -> "done: hold placed"
             is ActionResult.HoldReleased -> "done: hold released"
             is ActionResult.InviteSent -> "done: invite sent"
+            is ActionResult.InviteCancelled -> "done: invite cancelled"
         }
         is Outcome.GrantIssued -> "key issued"
         is Outcome.Refused -> "refused (${o.reason.name.lowercase()}): ${o.detail}"

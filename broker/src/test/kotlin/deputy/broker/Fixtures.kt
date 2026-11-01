@@ -40,6 +40,11 @@ class FakeCalendar : CalendarAdapter {
 
     override suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String =
         (nextId++).toString().also { events[it] = slot to "$title -> ${attendees.joinToString()}" }
+
+    override suspend fun cancelEvent(adapterRef: String, slot: Interval) {
+        check(events[adapterRef]?.first == slot) { "that event has changed" }
+        events.remove(adapterRef)
+    }
 }
 
 val ZONE = TimeZone.of("America/Los_Angeles")

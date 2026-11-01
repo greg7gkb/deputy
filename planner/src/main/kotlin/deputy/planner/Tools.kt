@@ -129,6 +129,7 @@ object Tools {
                 is ActionResult.HoldPlaced -> { put("hold_id", r.holdId.value); put("slot", slot(r.slot, zone)) }
                 is ActionResult.HoldReleased -> put("hold_id", r.holdId.value)
                 is ActionResult.InviteSent -> { put("slot", slot(r.slot, zone)); put("attendees", JsonArray(r.attendees.map(::JsonPrimitive))) }
+                is ActionResult.InviteCancelled -> put("cancelled", slot(r.slot, zone))
             }
         }
         is Outcome.GrantIssued -> buildJsonObject { put("status", "key_issued"); put("key_id", outcome.grantId.value) }

@@ -319,3 +319,12 @@ attendee (dana@example.com is a reserved domain, so nothing real was sent).
 
 Conversations: the Claude planner now keeps the conversation between requests (so "Monday,
 please" works), append-only, until "New conversation", 30 idle minutes, or an error.
+
+## D23. An invite can't be unsent, but it can be cancelled (default)
+
+Sending an invite stays *permanent* (asks first): the email can't be recalled. But the event can
+be cancelled, which sends guests a cancellation, so a sent invite now has a **Cancel invite**
+button in Activity. It is the user's authority only, like Undo: no permit covers
+`calendar.cancel_invite`, so the planner can't propose it, and the button needs a second tap
+because it notifies people. Before deleting, the adapter checks the event is still the one Deputy
+made (same id, calendar and times) without reading its title (D9).

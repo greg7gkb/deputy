@@ -60,6 +60,7 @@ private class FakeCalendar : CalendarAdapter {
     override suspend fun placeHold(slot: Interval, title: String, note: String) = "e${holds.size + 1}".also { holds[it] = slot }
     override suspend fun releaseHold(adapterRef: String) { holds.remove(adapterRef) }
     override suspend fun createEvent(slot: Interval, title: String, attendees: List<String>) = "invite"
+    override suspend fun cancelEvent(adapterRef: String, slot: Interval) {}
 }
 
 /**

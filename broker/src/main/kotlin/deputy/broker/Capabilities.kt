@@ -27,6 +27,7 @@ object Capabilities {
     val PLACE_HOLD = CapabilityId("calendar.place_hold")
     val RELEASE_HOLD = CapabilityId("calendar.release_hold")
     val SEND_INVITE = CapabilityId("calendar.send_invite")
+    val CANCEL_INVITE = CapabilityId("calendar.cancel_invite")
     val ANSWER_FREE_BUSY = CapabilityId("inbound.free_busy")
 
     val GARAGE_SHOW = CapabilityId("garage.show_button")
@@ -39,6 +40,8 @@ object Capabilities {
         CapabilitySpec(PLACE_HOLD, "Calendar", "Place a hold", RiskTier.REVERSIBLE, AdapterTier.ON_DEVICE_API, "CalendarContract"),
         CapabilitySpec(RELEASE_HOLD, "Calendar", "Release a hold", RiskTier.COMPENSABLE, AdapterTier.ON_DEVICE_API, "CalendarContract"),
         CapabilitySpec(SEND_INVITE, "Calendar", "Send an invite", RiskTier.PERMANENT, AdapterTier.ON_DEVICE_API, "CalendarContract"),
+        // The invite can't be unsent, but it can be cancelled: guests get a second message. Yours only, from Activity.
+        CapabilitySpec(CANCEL_INVITE, "Calendar", "Cancel an invite (you only)", RiskTier.COMPENSABLE, AdapterTier.ON_DEVICE_API, "CalendarContract"),
         CapabilitySpec(ANSWER_FREE_BUSY, "Calendar", "Answer free/busy for someone", RiskTier.REVERSIBLE, AdapterTier.ON_DEVICE_API, "fact store", Direction.INBOUND),
         CapabilitySpec(GARAGE_SHOW, "Garage", "Show the button near home", RiskTier.REVERSIBLE, AdapterTier.HANDED_AFFORDANCE, "Door widget", available = false),
         CapabilitySpec(GARAGE_OPEN, "Garage", "Open the gate", RiskTier.PERMANENT, AdapterTier.HANDED_AFFORDANCE, "Door widget", requiresHumanGesture = true, available = false),
@@ -88,6 +91,12 @@ sealed interface Action {
         val title: String,
         val attendees: List<String>,
     ) : Action { override val capability get() = Capabilities.SEND_INVITE }
+
+    /** Cancel an invite Deputy sent; guests are notified. No permit covers it: only the user can, from Activity. */
+    @Serializable @SerialName("calendar.cancel_invite")
+    data class CancelInvite(val artifactId: String) : Action {
+        override val capability get() = Capabilities.CANCEL_INVITE
+    }
 }
 
 /** What an executed action returned. Only these typed values ever flow back to a proposer. */
@@ -104,4 +113,7 @@ sealed interface ActionResult {
 
     @Serializable @SerialName("invite_sent")
     data class InviteSent(val slot: Interval, val attendees: List<String>) : ActionResult
+
+    @Serializable @SerialName("invite_cancelled")
+    data class InviteCancelled(val artifactId: String, val slot: Interval, val attendees: List<String>) : ActionResult
 }

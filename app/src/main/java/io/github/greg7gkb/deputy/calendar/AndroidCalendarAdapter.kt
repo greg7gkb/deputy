@@ -78,6 +78,21 @@ class AndroidCalendarAdapter(
         requestUpload()
     }
 
+    override suspend fun cancelEvent(adapterRef: String, slot: Interval) = withContext(Dispatchers.IO) {
+        requirePermission(Manifest.permission.WRITE_CALENDAR)
+        val uri = ContentUris.withAppendedId(Events.CONTENT_URI, adapterRef.toLong())
+        val target = writableCalendar()?.id
+        // Check it's still the event Deputy created (same calendar, same times) without reading its title.
+        val same = context.contentResolver.query(uri, arrayOf(Events.CALENDAR_ID, Events.DTSTART, Events.DTEND, Events.DELETED), null, null, null)?.use { c ->
+            c.moveToFirst() && c.getLong(0) == target && c.getLong(1) == slot.start.toEpochMilliseconds() &&
+                c.getLong(2) == slot.end.toEpochMilliseconds() && c.getInt(3) == 0
+        } ?: false
+        check(same) { "the invite was moved, changed or already deleted in the calendar" }
+        // Deleting an event with guests makes Google send them a cancellation once it syncs.
+        check(context.contentResolver.delete(uri, null, null) == 1) { "the calendar did not delete the invite" }
+        requestUpload()
+    }
+
     override suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String = withContext(Dispatchers.IO) {
         insertEvent(slot, title, Events.AVAILABILITY_BUSY, attendees, note = null)
     }

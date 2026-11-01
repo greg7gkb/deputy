@@ -111,7 +111,20 @@ private fun ActivityCard(item: ActivityItem, actor: String, focused: Boolean, un
                 tag?.let { (text, style) -> Badge(text, style) }
                 Text(item.footer, style = Type.Mono, modifier = Modifier.weight(1f))
                 if (external != null) SmallButton("Open in Calendar", onClick = { onOpen(external) })
-                if (undoSeq != null) SmallButton(if (undoing) "Undoing…" else "Undo", onClick = { onUndo(undoSeq) }, enabled = !undoing)
+                if (undoSeq != null) {
+                    var armed by remember { mutableStateOf(false) }
+                    LaunchedEffect(armed) { if (armed) { kotlinx.coroutines.delay(4_000); armed = false } }
+                    val confirm = item.undoConfirm
+                    SmallButton(
+                        when {
+                            undoing -> "Working…"
+                            armed && confirm != null -> confirm
+                            else -> item.undoLabel
+                        },
+                        onClick = { if (confirm != null && !armed) armed = true else { armed = false; onUndo(undoSeq) } },
+                        enabled = !undoing,
+                    )
+                }
             }
         }
     }

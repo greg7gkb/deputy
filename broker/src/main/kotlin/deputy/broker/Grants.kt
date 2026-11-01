@@ -61,6 +61,15 @@ sealed interface Permit {
         override val capabilities get() = setOf(Capabilities.EMAIL_READ)
     }
 
+    /**
+     * Reply to messages Deputy has read, to their senders only. Permanent: every reply asks
+     * first, and there is no preapproved form (D27).
+     */
+    @Serializable @SerialName("mail_reply")
+    data class MailReply(val maxBodyChars: Int = 1000) : Permit {
+        override val capabilities get() = setOf(Capabilities.EMAIL_SEND)
+    }
+
     /** Inbound: a peer may ask whether a slot is free, within these windows and this budget. */
     @Serializable @SerialName("inbound_free_busy")
     data class InboundFreeBusy(
@@ -148,6 +157,13 @@ object GrantTemplates {
         title = "Read mail as summaries",
         permits = listOf(Permit.MailRead()),
         maxUses = 10,
+        ttlMinutes = 2.hours.inWholeMinutes.toInt(),
+    )
+
+    fun mailReplies() = GrantRequest(
+        title = "Reply to mail",
+        permits = listOf(Permit.MailReply()),
+        maxUses = 3,
         ttlMinutes = 2.hours.inWholeMinutes.toInt(),
     )
 

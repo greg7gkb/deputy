@@ -151,3 +151,66 @@ class MailTest {
         assertEquals(ids, executed.mail.map { it.messageId })
     }
 }
+
+/** Replies: the full round trip, and the limits on it (D27). */
+class ReplyTest {
+    private suspend fun Rig.key(request: GrantRequest): GrantId =
+        (user.mintGrant(Principal.Assistant, Direction.OUTBOUND, request) as Outcome.GrantIssued).grantId
+
+    /** Reads the sample inbox and returns the handle for each sample message by its adapter ref. */
+    private suspend fun Rig.readSamples(): Map<String, MessageId> {
+        mail.messages += SampleMail.inbox(clock.now)
+        val done = assertIs<Outcome.Done>(agent.propose(key(GrantTemplates.mailReading()), Action.ReadInbox()))
+        val read = assertIs<ActionResult.InboxRead>(done.result).messages.map { it.messageId }
+        val records = events().filterIsInstance<Event.ActionExecuted>().last().mail
+        return records.associate { it.adapterRef to it.messageId }.also { assertEquals(read.toSet(), it.values.toSet()) }
+    }
+
+    @Test fun `a reply asks first, then goes to the sender and nobody else`() = runTest {
+        val rig = Rig()
+        val ids = rig.readSamples()
+        val replyKey = rig.key(GrantTemplates.mailReplies())
+        val asked = assertIs<Outcome.AwaitingUser>(rig.agent.propose(replyKey, Action.SendReply(ids.getValue("sample-dana"), "Tuesday at 2 works. See you then!")))
+        assertTrue(rig.mail.sent.isEmpty(), "nothing is sent before the tap")
+
+        val view = Narrator.approval(rig.broker.snapshots.value.pending.single(), ZONE, rig.clock.now, rig.broker.snapshots.value.messages)
+        assertEquals(SampleMail.DANA, view.rows.toMap()["To"])
+        assertFalse("Careful" in view.rows.toMap())
+
+        val done = assertIs<Outcome.Done>(rig.user.approve(asked.requestId))
+        assertEquals(ActionResult.ReplySent(ids.getValue("sample-dana")), done.result)
+        assertEquals(listOf(Triple("sample-dana", SampleMail.DANA, "Tuesday at 2 works. See you then!")), rig.mail.sent)
+        // What comes back to the proposer says which message, never to whom.
+        assertFalse(SampleMail.DANA in Journal.JSON.encodeToString(Outcome.serializer(), done))
+    }
+
+    @Test fun `replying to a flagged message warns the person`() = runTest {
+        val rig = Rig()
+        val ids = rig.readSamples()
+        rig.agent.propose(rig.key(GrantTemplates.mailReplies()), Action.SendReply(ids.getValue("sample-attack"), "Here are my free times."))
+        val rows = Narrator.approval(rig.broker.snapshots.value.pending.single(), ZONE, rig.clock.now, rig.broker.snapshots.value.messages).rows.toMap()
+        assertEquals("assistant-ops@calendar-sync.example", rows["To"], "the person sees exactly where it would go")
+        assertTrue("Careful" in rows)
+    }
+
+    @Test fun `replies have limits`() = runTest {
+        val rig = Rig()
+        val ids = rig.readSamples()
+        val mailKey = rig.agent.myGrants().single().grantId
+        val replyKey = rig.key(GrantTemplates.mailReplies())
+        fun refused(o: Outcome) = assertIs<Outcome.Refused>(o).reason
+        assertEquals(Refusal.NO_PERMIT, refused(rig.agent.propose(mailKey, Action.SendReply(ids.getValue("sample-dana"), "hi"))))
+        assertEquals(Refusal.OUT_OF_SCOPE, refused(rig.agent.propose(replyKey, Action.SendReply(MessageId("m_guess"), "hi"))))
+        assertEquals(Refusal.OUT_OF_SCOPE, refused(rig.agent.propose(replyKey, Action.SendReply(ids.getValue("sample-code"), "what's the code?"))))
+        assertEquals(Refusal.OUT_OF_SCOPE, refused(rig.agent.propose(replyKey, Action.SendReply(ids.getValue("sample-dana"), "x".repeat(1001)))))
+        assertEquals(Refusal.OUT_OF_SCOPE, refused(rig.agent.propose(replyKey, Action.SendReply(ids.getValue("sample-dana"), "ok ‮evil"))))
+        assertTrue(rig.mail.sent.isEmpty())
+    }
+
+    @Test fun `addresses are parsed strictly`() {
+        assertEquals("dana@example.com", MailGuard.address("Dana Lee <Dana@Example.com>"))
+        assertEquals("x@y.org", MailGuard.address("x@y.org"))
+        assertEquals(null, MailGuard.address("Dana Lee"))
+        assertEquals(null, MailGuard.address("<a@b.com>, <c@d.com>\r\nBcc: e@f.com"))
+    }
+}

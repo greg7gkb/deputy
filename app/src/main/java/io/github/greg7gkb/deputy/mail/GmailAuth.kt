@@ -15,15 +15,21 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /** Thrown when Gmail needs the user's consent first. Its message is written for a person. */
-class GmailNotConnected : IllegalStateException("Gmail isn't connected: connect it in Lab.")
+class GmailNotConnected(message: String = "Gmail isn't connected: connect it in Lab.") : IllegalStateException(message)
 
 /**
  * Gmail authorization through Play Services' Authorization API (D25). Play Services holds the
  * grant and refreshes access tokens; Deputy asks for one when it reads and never writes one to
- * disk. The only scope is gmail.readonly, so the adapter cannot send, change or delete mail.
+ * disk. Two scopes: gmail.readonly to read and gmail.send to send replies (D27). Neither can
+ * change or delete mail. Each call asks only for the scope it needs.
+ *
+ * The Authorization API does allow asking for scopes incrementally, but sending runs inside the
+ * broker with no Activity to show a consent screen. So [connect], the one place with an Activity,
+ * asks for both; reading and sending then authorize silently with their own scope.
  */
 object GmailAuth {
-    const val SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+    const val READ = "https://www.googleapis.com/auth/gmail.readonly"
+    const val SEND = "https://www.googleapis.com/auth/gmail.send"
 
     /** What [connect] found: already connected, or the consent screen the Activity must launch. */
     sealed interface Start {
@@ -35,9 +41,12 @@ object GmailAuth {
     @Volatile var connectedHint: Boolean = false
         private set
 
-    /** Starts connecting. Shows nothing itself: if consent is needed, the caller launches the intent. */
+    /**
+     * Starts connecting (or reconnecting, to add sending). Shows nothing itself: if consent is
+     * needed, the caller launches the intent.
+     */
     suspend fun connect(context: Context): Start {
-        val result = authorize(context)
+        val result = authorize(context, READ, SEND)
         return if (result.hasResolution()) Start.NeedsConsent(checkNotNull(result.pendingIntent))
         else Start.Connected
     }
@@ -52,22 +61,34 @@ object GmailAuth {
         } catch (_: ApiException) {
             null
         }
-        connectedHint = result?.accessToken != null
-        return connectedHint
+        val ok = result?.accessToken != null
+        if (ok) connectedHint = true
+        return ok
     }
 
-    /** "Connected" or not, checked silently against Play Services. Never shows UI. */
-    suspend fun status(context: Context): Boolean = try {
-        !authorize(context).hasResolution()
+    /** Reading connected or not, checked silently against Play Services. Never shows UI. */
+    suspend fun status(context: Context): Boolean = silently(context, READ)
+
+    /** Sending connected or not (a Gmail connected before replies existed lacks it). Never shows UI. */
+    suspend fun sendStatus(context: Context): Boolean = silently(context, SEND)
+
+    private suspend fun silently(context: Context, scope: String) = try {
+        !authorize(context, scope).hasResolution()
     } catch (_: Exception) {
         false
     }
 
-    /** A fresh access token, silently. Throws [GmailNotConnected] if the user must consent first. */
-    internal suspend fun accessToken(context: Context): String {
-        val result = authorize(context)
-        if (result.hasResolution()) throw GmailNotConnected()
-        return result.accessToken ?: throw GmailNotConnected()
+    /** A fresh token for reading, silently. Throws [GmailNotConnected] if the user must consent first. */
+    internal suspend fun readToken(context: Context): String = token(context, READ, GmailNotConnected())
+
+    /** A fresh token for sending, silently. Throws [GmailNotConnected] if sending was never granted. */
+    internal suspend fun sendToken(context: Context): String =
+        token(context, SEND, GmailNotConnected("Gmail sending isn't connected: reconnect Gmail in Lab."))
+
+    private suspend fun token(context: Context, scope: String, missing: GmailNotConnected): String {
+        val result = authorize(context, scope)
+        if (result.hasResolution()) throw missing
+        return result.accessToken ?: throw missing
     }
 
     /** Drops a token Gmail rejected, so the next [accessToken] call gets a new one. */
@@ -75,10 +96,13 @@ object GmailAuth {
         runCatching { Identity.getAuthorizationClient(context).clearToken(ClearTokenRequest.builder().setToken(token).build()).await() }
     }
 
-    private suspend fun authorize(context: Context): AuthorizationResult {
-        val request = AuthorizationRequest.builder().setRequestedScopes(listOf(Scope(SCOPE))).build()
+    private suspend fun authorize(context: Context, vararg scopes: String): AuthorizationResult {
+        val request = AuthorizationRequest.builder().setRequestedScopes(scopes.map(::Scope)).build()
         val result = Identity.getAuthorizationClient(context).authorize(request).await()
-        connectedHint = !result.hasResolution() && result.accessToken != null
+        // The hint tracks reading, which is what "connected" means in Lab.
+        if (READ in scopes && (SEND !in scopes || !result.hasResolution())) {
+            connectedHint = !result.hasResolution() && result.accessToken != null
+        }
         return result
     }
 }

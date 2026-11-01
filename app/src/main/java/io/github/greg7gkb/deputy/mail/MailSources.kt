@@ -26,7 +26,17 @@ class TestInbox(context: Context) : MailAdapter {
         return SampleMail.inbox(at).filter { it.receivedAt >= since }.sortedByDescending { it.receivedAt }.take(max)
     }
 
-    private companion object { const val KEY = "seeded_at" }
+    /** Nothing leaves the phone: the reply is counted, and Activity shows what would have gone. */
+    override suspend fun sendReply(adapterRef: String, to: String, body: String): String {
+        val n = prefs.getInt(SENT, 0) + 1
+        prefs.edit().putInt(SENT, n).apply()
+        return "test-reply-$n"
+    }
+
+    private companion object {
+        const val KEY = "seeded_at"
+        const val SENT = "replies_sent"
+    }
 }
 
 /**
@@ -42,4 +52,7 @@ class MailSwitch(context: Context, val test: TestInbox, val gmail: GmailAdapter)
     private val current get() = if (useGmail) gmail else test
     override val source get() = current.source
     override suspend fun recent(since: Instant, max: Int) = current.recent(since, max)
+    // A reply goes back through the mailbox the message came from: test refs never reach Gmail.
+    override suspend fun sendReply(adapterRef: String, to: String, body: String) =
+        (if (adapterRef.startsWith("sample-")) test else gmail).sendReply(adapterRef, to, body)
 }

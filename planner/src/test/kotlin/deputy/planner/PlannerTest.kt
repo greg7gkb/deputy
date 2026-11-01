@@ -60,7 +60,7 @@ class ToolsTest {
     }
 
     @Test fun `every tool is strict and its schema names every property as required`() {
-        assertEquals(7, Tools.definitions.size)
+        assertEquals(8, Tools.definitions.size)
         Tools.definitions.forEach { assertEquals(true, it.strict().orElse(false), it.name()) }
     }
 }

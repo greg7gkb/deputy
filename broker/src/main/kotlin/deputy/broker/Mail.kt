@@ -33,6 +33,14 @@ interface MailAdapter {
     val source: String
     /** Newest first, at most [max], received at or after [since]. */
     suspend fun recent(since: Instant, max: Int): List<RawMessage>
+
+    /**
+     * Reply to the message [adapterRef], in its thread, to exactly [to] and nobody else; the
+     * subject is "Re: " plus the original's. [to] is the address the user saw and approved, so
+     * implementations must not substitute a Reply-To or add recipients (D27). Returns a reference
+     * to the sent message.
+     */
+    suspend fun sendReply(adapterRef: String, to: String, body: String): String
 }
 
 /** What kind of message the reader thinks it is. A closed set: there is no "other, described as ...". */
@@ -84,6 +92,8 @@ data class MailRecord(
     val receivedAt: SInstant,
     val reading: MailReading,
     val reader: String,
+    /** The bare address in From, if it is one. The only address a reply can go to (D27). */
+    val replyTo: String? = null,
 ) {
     /** The proposer's side: the same message with every untrusted string removed. */
     fun summary() = MailSummary(messageId, receivedAt, reading.kind, reading.proposedTimes, reading.durationMinutes, reading.addressesAssistant)
@@ -134,6 +144,16 @@ object MailGuard {
         }.joinToString("").replace(Regex("\\s+"), " ").trim()
         return if (clean.length <= max) clean.ifEmpty { "(none)" } else clean.take(max - 1).trimEnd() + "…"
     }
+
+    /** The bare address in a From header ("Dana <dana@example.com>"), or null if there isn't exactly one plausible one. */
+    fun address(from: String): String? {
+        // One sender, one address. A From naming several is either broken or an attempt to add recipients.
+        if (from.count { it == '@' } != 1) return null
+        val candidate = Regex("<([^<>]+)>").findAll(from).lastOrNull()?.groupValues?.get(1) ?: from
+        return candidate.trim().lowercase().takeIf { EMAIL.matches(it) }
+    }
+
+    private val EMAIL = Regex("[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\\.[a-z0-9-]{1,63}){1,8}")
 
     /** A code message's subject keeps its shape but not its digits, so the journal never holds the code. */
     fun subject(subject: String, kind: MailKind): String {

@@ -47,7 +47,7 @@ fun ApprovalSheet(app: DeputyApp, snapshot: BrokerSnapshot) {
     if (snapshot.integrityError != null) return
     val live = snapshot.pending.filter { it.expiresAt > snapshot.now }.sortedBy { it.at }
     val req = live.firstOrNull() ?: return
-    val view = remember(req, snapshot.now) { Narrator.approval(req, snapshot.zone, snapshot.now) }
+    val view = remember(req, snapshot.now) { Narrator.approval(req, snapshot.zone, snapshot.now, snapshot.messages) }
     var deciding by remember { mutableStateOf<RequestId?>(null) }
     val busy = deciding == req.requestId
 

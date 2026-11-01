@@ -103,6 +103,7 @@ object Keyring {
             val who = it.allowedAttendees?.joinToString() ?: "anyone"
             parts += if (it.preapproved) "May send invites to $who without asking." else "May send invites to $who. Asks you first each time."
         }
+        if (p.any { it is Permit.MailReply }) parts += "May reply to messages Deputy has read, only to whoever sent them. Asks you first each time."
         if (p.any { it is Permit.MailRead }) parts += "May read recent mail as summaries: what kind each message is and any times it proposes. Never who sent it or what it says."
         p.filterIsInstance<Permit.InboundFreeBusy>().forEach {
             parts += "${g.holder.displayName} may ask if you're free ${days(it.weekdays)}, ${it.earliestHour}:00 to ${it.latestHour}:00. Nothing else."
@@ -118,6 +119,7 @@ object Keyring {
             (p.allowedAttendees?.let { listOf("only ${it.joinToString()}") } ?: listOf("anyone"))
         is Permit.InboundFreeBusy -> listOf("free/busy only", days(p.weekdays), "${p.earliestHour}–${p.latestHour}h", "${p.questionsPerWeek} questions/week")
         is Permit.MailRead -> listOf("summaries only", "≤ ${p.maxMessages} messages", "last ${p.maxAgeDays} days")
+        is Permit.MailReply -> listOf("asks first", "sender only", "≤ ${p.maxBodyChars} characters")
     }
 
     private fun days(set: Set<DayOfWeek>): String {
@@ -256,6 +258,12 @@ object Narrator {
             is ActionResult.InviteCancelled -> ActivityItem(seq, e.at, time, "You cancelled an invite",
                 "${Format.slot(r.slot, zone, s.now)} with ${r.attendees.joinToString()}. They were sent a cancellation.", footer, Tone.DONE)
             is ActionResult.InboxRead -> narrateMail(seq, e, time, footer, zone, s.now)
+            is ActionResult.ReplySent -> {
+                val m = s.messages[r.messageId]
+                ActivityItem(seq, e.at, time, "Sent a reply",
+                    "To ${m?.replyTo ?: "the sender"}, re \"${m?.subject ?: "a message"}\":\n${(e.action as Action.SendReply).body}",
+                    "asked first: permanent" + if (footer.isNotEmpty()) " · $footer" else "", Tone.DONE)
+            }
         }
     }
 
@@ -301,7 +309,12 @@ object Narrator {
         return ActivityItem(seq, e.at, time, "${e.asker.displayName} asked: $q", body, footer, Tone.INBOUND)
     }
 
-    fun approval(req: Event.ApprovalRequested, zone: TimeZone, now: Instant): ApprovalView = when (req.kind) {
+    fun approval(
+        req: Event.ApprovalRequested,
+        zone: TimeZone,
+        now: Instant,
+        messages: Map<deputy.broker.MessageId, deputy.broker.MailRecord> = emptyMap(),
+    ): ApprovalView = when (req.kind) {
         ApprovalKind.MINT_GRANT -> {
             val r = req.grantRequest!!
             val preview = Grant(GrantId("preview"), req.principal, Direction.OUTBOUND, r.title, r.permits, r.maxUses, now,
@@ -326,6 +339,17 @@ object Narrator {
                 when (a) {
                     is Action.SendInvite -> listOf("When" to Format.slot(Interval.of(a.start, a.durationMinutes), zone, now),
                         "Title" to a.title, "Invites" to a.attendees.joinToString(), "Undo" to "Not possible: they'll be notified")
+                    // The recipient comes from the message, not the proposer; the person sees exactly who (D27).
+                    is Action.SendReply -> {
+                        val m = messages[a.messageId]
+                        buildList {
+                            add("To" to (m?.replyTo ?: "unknown"))
+                            add("Replying to" to (m?.let { "\"${it.subject}\" from ${it.from}" } ?: "a message"))
+                            add("Message" to a.body)
+                            if (m?.reading?.addressesAssistant == true) add("Careful" to "Deputy's reader flagged that message as written to instruct an AI assistant.")
+                            add("Undo" to "Not possible: email can't be unsent")
+                        }
+                    }
                     else -> listOf("Action" to describe(a, zone, now))
                 },
                 deputy.broker.Journal.JSON.encodeToString(Action.serializer(), a),
@@ -339,6 +363,7 @@ object Narrator {
         is Action.ReleaseHold -> "release a hold"
         is Action.SendInvite -> "send \"${a.title}\" ${Format.slot(Interval.of(a.start, a.durationMinutes), zone, now)} to ${a.attendees.joinToString()}"
         is Action.CancelInvite -> "cancel an invite"
+        is Action.SendReply -> "send a reply"
         is Action.ReadInbox -> "read up to ${a.maxResults} emails from the last ${plural(a.sinceDays, "day")}"
     }
 

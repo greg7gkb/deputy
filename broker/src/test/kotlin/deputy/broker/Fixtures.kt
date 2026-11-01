@@ -64,6 +64,13 @@ class FakeMail(val messages: MutableList<RawMessage> = mutableListOf()) : MailAd
         reads++
         return messages.filter { it.receivedAt >= since }.sortedByDescending { it.receivedAt }.take(max)
     }
+
+    /** (replying to, to, body) for every reply sent. */
+    val sent = mutableListOf<Triple<String, String, String>>()
+    override suspend fun sendReply(adapterRef: String, to: String, body: String): String {
+        sent += Triple(adapterRef, to, body)
+        return "sent-${sent.size}"
+    }
 }
 
 /** A broker on a fake calendar at Monday 08:00, with deterministic ids. */

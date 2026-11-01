@@ -28,6 +28,9 @@ build order. Treat its hard rules as non-negotiable. This file adds how to work 
   goes behind the broker as an adapter, or in front of it with Deputy as the server (D24).
 - Adapters read the minimum. The calendar adapter must never query titles, descriptions,
   locations or attendees (D9).
+- Untrusted content (anything other people wrote: mail, later notifications and messages) never
+  reaches the planner as text. It goes through a reader (`reader/`, D26) into typed slots, the
+  broker bounds the result, and the planner gets types and broker-minted handles only (D25).
 - Run `./gradlew :broker:test` after any broker change; add a test for every new rule.
 
 ## Testing on the emulator
@@ -53,7 +56,8 @@ Commands are listed in `app/src/debug/.../DebugDriver.kt`; results go to logcat 
 - History: 0.1 was Phase 0 end to end (broker, Keyring, kill switch, calendar adapter). 0.2 adds
   the Claude planner, links back from what Deputy creates, and the feedback round. 0.3 closes
   Phase 0: follow-up conversations, sandbox calendar, LLM logs, sync fixes, cancelling invites
-  (`docs/phase0.md`).
+  (`docs/phase0.md`). 0.4 starts Phase 1: mail as untrusted input through a quarantined reader,
+  replies that ask first, a test inbox and a one-label Gmail adapter (D25 to D27).
 
 ## Commits
 

@@ -134,6 +134,8 @@ data class BrokerSnapshot(
     val facts: List<Fact>,
     val undone: Set<Long>,
     val integrityError: String?,
+    /** Messages Deputy has read, for showing a reply's recipient and subject. */
+    val messages: Map<MessageId, MailRecord> = emptyMap(),
 )
 
 /** An invite Deputy sent and nobody has cancelled. */
@@ -524,6 +526,13 @@ class Broker(
                     mailRead = raw.map { m -> readOne(reader, m, now) }
                     ActionResult.InboxRead(mailRead.map { it.summary() })
                 }
+                is Action.SendReply -> {
+                    val source = mail ?: error("no mail account is connected")
+                    val message = state.messages.getValue(action.messageId)
+                    // Policy checked replyTo is present; the adapter sends to it and nobody else (D27).
+                    adapterRef = adapterCall("the mail account", ADAPTER_TIMEOUT * 2) { source.sendReply(message.adapterRef, message.replyTo!!, action.body) }
+                    ActionResult.ReplySent(action.messageId)
+                }
                 is Action.CancelInvite -> {
                     val invite = state.invites.getValue(action.artifactId)
                     adapterCall { calendar.cancelEvent(invite.adapterRef, invite.slot) }
@@ -541,7 +550,7 @@ class Broker(
         // Step 2: the record. Once the world has changed it must be journaled, whatever else fails (F8).
         val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf, artifactId, mailRead))
         // Step 3: housekeeping. Calendar writes make the cached busy view stale; best effort.
-        if (action !is Action.FindFreeSlots && action !is Action.ReadInbox) runCatching { invalidateBusy() }
+        if (action is Action.PlaceHold || action is Action.ReleaseHold || action is Action.SendInvite || action is Action.CancelInvite) runCatching { invalidateBusy() }
         return Outcome.Done(result, entry.seq)
     }
 
@@ -558,7 +567,7 @@ class Broker(
         }
         return MailRecord(
             MessageId(newId("m")), m.adapterRef, MailGuard.display(m.from, MailGuard.MAX_FROM),
-            MailGuard.subject(m.subject, reading.kind), m.receivedAt, reading, reader.name,
+            MailGuard.subject(m.subject, reading.kind), m.receivedAt, reading, reader.name, MailGuard.address(m.from),
         )
     }
 
@@ -633,6 +642,7 @@ class Broker(
     private fun context(now: Instant, principal: Principal) = PolicyContext(
         now, zone, state.holds, principal,
         holdOwner = { hold -> hold.grantId?.let { state.grants[it]?.grant?.holder } },
+        messages = state.messages,
     )
 
     /** If the journal did not verify, nothing happens until a person looks (fail closed). */
@@ -658,6 +668,7 @@ class Broker(
         facts = facts.all(),
         undone = state.undone,
         integrityError = journal.integrityError,
+        messages = state.messages,
     )
 
     companion object {

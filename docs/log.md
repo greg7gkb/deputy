@@ -8,6 +8,21 @@ than a success that did not.
 
 ---
 
+## 2026-11-01 — Replies, the round trip (0.4)
+
+- `email.send_reply` (D27): the planner names a message by handle and writes a body; the broker
+  sends it to the one address in that message's From and nobody else, and only after a tap. The
+  confirmation shows the real recipient, the subject it answers, the full text, and a warning if
+  the original was flagged. No replies to code messages.
+- On the emulator with Claude: "Reply to the meeting request that proposes Tuesday at 2pm: say
+  Tuesday at 2 works for me." Claude read the inbox, found the message by its proposed time (it
+  never knew it was from Dana), asked for a reply key, proposed the reply, and Deputy showed
+  "To dana@example.com, replying to "Coffee next week?"". After the tap, Claude got back only
+  which message was answered. Test-inbox replies never leave the phone.
+- The Gmail adapter can send now (gmail.send, asked for at connect alongside readonly). Neither
+  reading nor sending has been tried against a real account yet.
+- Version 0.4 (build 7). Not tagged: tag `v0.4` after a pass on the Pixel.
+
 ## 2026-11-01 — Phase 1 begins: mail as untrusted input
 
 - Mail reading end to end (D25): `email.read_inbox` behind a key; the broker hands each message to

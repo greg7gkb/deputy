@@ -47,7 +47,8 @@ object Capabilities {
         CapabilitySpec(GARAGE_OPEN, "Garage", "Open the gate", RiskTier.PERMANENT, AdapterTier.HANDED_AFFORDANCE, "Door widget", requiresHumanGesture = true, available = false),
         // The first untrusted input: mail is read by the quarantined reader, and only typed summaries come back (D25).
         CapabilitySpec(EMAIL_READ, "Email", "Read mail as typed summaries", RiskTier.REVERSIBLE, AdapterTier.CLOUD_API, "Gmail API"),
-        CapabilitySpec(EMAIL_SEND, "Email", "Send a reply", RiskTier.PERMANENT, AdapterTier.CLOUD_API, "Gmail API", available = false),
+        // Only to the sender of a message Deputy read, and always asks first: mail can't be unsent (D27).
+        CapabilitySpec(EMAIL_SEND, "Email", "Reply to a message", RiskTier.PERMANENT, AdapterTier.CLOUD_API, "Gmail API"),
     )
 
     fun spec(id: CapabilityId): CapabilitySpec? = catalog.firstOrNull { it.id == id }
@@ -102,6 +103,15 @@ sealed interface Action {
         override val capability get() = Capabilities.EMAIL_READ
     }
 
+    /**
+     * Reply to a message Deputy read, by its handle. The recipient is the address the message
+     * came from, fixed by the broker; the planner can't name one. Permanent, so it asks first (D27).
+     */
+    @Serializable @SerialName("email.send_reply")
+    data class SendReply(val messageId: MessageId, val body: String) : Action {
+        override val capability get() = Capabilities.EMAIL_SEND
+    }
+
     /** Cancel an invite Deputy sent; guests are notified. No permit covers it: only the user can, from Activity. */
     @Serializable @SerialName("calendar.cancel_invite")
     data class CancelInvite(val artifactId: String) : Action {
@@ -126,6 +136,10 @@ sealed interface ActionResult {
 
     @Serializable @SerialName("invite_cancelled")
     data class InviteCancelled(val artifactId: String, val slot: Interval, val attendees: List<String>) : ActionResult
+
+    /** The reply went out. The proposer learns which message it answered, not to whom. */
+    @Serializable @SerialName("reply_sent")
+    data class ReplySent(val messageId: MessageId) : ActionResult
 
     /** One summary per message read. No senders, subjects or text: see [MailSummary]. */
     @Serializable @SerialName("inbox_read")

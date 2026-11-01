@@ -10,6 +10,7 @@ import deputy.broker.GrantSummary
 import deputy.broker.GrantTemplates
 import deputy.broker.HoldId
 import deputy.broker.Interval
+import deputy.broker.MessageId
 import deputy.broker.Outcome
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -43,9 +44,9 @@ object Tools {
             "request_key",
             "Ask the user for a key. Deputy shows them exactly what it allows and nothing happens until they approve; this call waits for their decision. " +
                 "kind 'calendar_scheduling' covers find_free_slots, place_hold and release_hold. kind 'send_invites' covers send_invite, only to the attendees you list. " +
-                "kind 'email_reading' covers read_inbox.",
+                "kind 'email_reading' covers read_inbox. kind 'email_replies' covers reply_to_message.",
             mapOf(
-                "kind" to mapOf("type" to "string", "enum" to listOf("calendar_scheduling", "send_invites", "email_reading")),
+                "kind" to mapOf("type" to "string", "enum" to listOf("calendar_scheduling", "send_invites", "email_reading", "email_replies")),
                 "purpose" to mapOf("type" to "string", "description" to "One short line the user will see, e.g. 'Find a time with Dana next week'."),
                 "invite_attendees" to mapOf("type" to "array", "items" to mapOf("type" to "string"), "description" to "Email addresses, for send_invites. Empty for calendar_scheduling."),
             ),
@@ -104,6 +105,17 @@ object Tools {
                 "since_days" to int("How far back to look, in days, 1-7."),
             ),
         ),
+        tool(
+            "reply_to_message",
+            "Reply to a message from read_inbox, by its message_id. It goes only to whoever sent that message; you can't choose " +
+                "the recipient. Email can't be unsent, so Deputy shows the user the recipient and your text and asks first; the call " +
+                "waits for their decision. Write only what the user asked you to say; you haven't seen the original.",
+            mapOf(
+                "key_id" to str("A key covering reply_to_message."),
+                "message_id" to str("From read_inbox."),
+                "body" to str("The reply text, plain, at most 1000 characters."),
+            ),
+        ),
     )
 
     /** Parses a tool call into a typed broker call, or throws IllegalArgumentException with a reason the model can act on. */
@@ -126,6 +138,7 @@ object Tools {
                         GrantTemplates.sendInvites(who).copy(title = "Send invites", purpose = purpose)
                     }
                     "email_reading" -> GrantTemplates.mailReading().copy(purpose = purpose)
+                    "email_replies" -> GrantTemplates.mailReplies().copy(purpose = purpose)
                     else -> throw IllegalArgumentException("unknown kind")
                 })
             }
@@ -134,6 +147,7 @@ object Tools {
             "release_hold" -> Call.Propose(key(), Action.ReleaseHold(HoldId(s("hold_id"))))
             "send_invite" -> Call.Propose(key(), Action.SendInvite(at("start"), i("duration_minutes"), s("title"), list("attendees")))
             "read_inbox" -> Call.Propose(key(), Action.ReadInbox(i("max_results"), i("since_days")))
+            "reply_to_message" -> Call.Propose(key(), Action.SendReply(MessageId(s("message_id")), s("body")))
             else -> throw IllegalArgumentException("there is no tool called $name")
         }
     }
@@ -148,6 +162,7 @@ object Tools {
                 is ActionResult.HoldReleased -> put("hold_id", r.holdId.value)
                 is ActionResult.InviteSent -> { put("slot", slot(r.slot, zone)); put("attendees", JsonArray(r.attendees.map(::JsonPrimitive))) }
                 is ActionResult.InviteCancelled -> put("cancelled", slot(r.slot, zone))
+                is ActionResult.ReplySent -> put("replied_to", r.messageId.value)
                 // Built field by field from the typed summary: there is no text here to pass on (D25).
                 is ActionResult.InboxRead -> put("messages", buildJsonArray {
                     r.messages.forEach { m ->

@@ -17,6 +17,8 @@ data class PolicyContext(
     /** Who is asking. Holds can only be released by the principal whose key placed them. */
     val principal: Principal? = null,
     val holdOwner: (HoldRecord) -> Principal? = { null },
+    /** Messages Deputy has read, by handle. A reply can only answer one of these. */
+    val messages: Map<MessageId, MailRecord> = emptyMap(),
 )
 
 sealed interface Verdict {
@@ -126,8 +128,26 @@ object Policy {
                 else -> null
             }
 
+            permit is Permit.MailReply && action is Action.SendReply -> {
+                val message = ctx.messages[action.messageId]
+                when {
+                    message == null -> "that is not a message Deputy has read"
+                    message.replyTo == null -> "the message has no address Deputy can reply to"
+                    message.reading.kind == MailKind.SECURITY_CODE -> "Deputy doesn't reply to code messages"
+                    action.body.isBlank() || action.body.length > permit.maxBodyChars -> "the reply is empty or longer than ${permit.maxBodyChars} characters"
+                    !isCleanBody(action.body) -> "the reply has control or hidden formatting characters"
+                    else -> null
+                }
+            }
+
             else -> "the key does not cover this action"
         }
+    }
+
+    /** Like [isCleanText], but line breaks are allowed: a reply is a few short paragraphs. */
+    fun isCleanBody(text: String) = text.none {
+        (it.category == CharCategory.CONTROL && it != '\n') || it.category == CharCategory.FORMAT ||
+            it.category == CharCategory.LINE_SEPARATOR || it.category == CharCategory.PARAGRAPH_SEPARATOR
     }
 
     /** What a requester may even ask the user for. The user still sees and approves it. */
@@ -179,6 +199,7 @@ object Policy {
             p.maxAgeDays !in 1..30 -> "mail can be at most 30 days old"
             else -> null
         }
+        is Permit.MailReply -> if (p.maxBodyChars !in 1..4000) "a reply can be at most 4000 characters" else null
         is Permit.InboundFreeBusy -> when {
             p.weekdays.isEmpty() -> "no days allowed"
             !validHours(p.earliestHour, p.latestHour) -> "the hours are not a valid range"

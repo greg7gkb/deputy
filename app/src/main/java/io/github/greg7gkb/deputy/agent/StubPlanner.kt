@@ -193,6 +193,7 @@ class StubPlanner(
             is ActionResult.InviteSent -> "done: invite sent"
             is ActionResult.InviteCancelled -> "done: invite cancelled"
             is ActionResult.InboxRead -> "done: ${r.messages.size} summaries, no text"
+            is ActionResult.ReplySent -> "done: reply sent"
         }
         is Outcome.GrantIssued -> "key issued"
         is Outcome.Refused -> "refused (${o.reason.name.lowercase()}): ${o.detail}"

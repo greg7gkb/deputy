@@ -11,7 +11,9 @@ half of that question (authority, trust, and the interface between an agent and 
 does not control), and is designed to extend into the kernel-level half (a forked,
 agent-native OS) later.
 
-Status: Phase 0 complete (v0.3, see `docs/phase0.md`); Phase 1 next. Hobby prototype, single user. Public from the first commit.
+Status: Phase 0 complete (v0.3, see `docs/phase0.md`). Phase 1 under way: mail is the first
+untrusted input, read by a quarantined reader into typed summaries, with replies that ask first
+(D25 to D27). Hobby prototype, single user. Public from the first commit.
 
 ## Why
 
@@ -135,15 +137,19 @@ calendar" creates a local one). Debug builds log every Claude exchange:
 broker/            Pure Kotlin/JVM: the reference monitor. Capabilities, grants, Policy,
                    the journal, the fact store, inbound answering, and all user-facing
                    wording (broker/present). No Android imports.
+reader/            Pure Kotlin/JVM: the quarantined reader. Untrusted content (mail) in, typed
+                   slots out; no port, no adapter, no network. Rule-based for now, plus the
+                   sample inbox used by the Lab and the tests.
 planner/           Pure Kotlin/JVM: the Claude planner (Messages API tool use), holding only
                    an AgentPort. Live API test: ./gradlew :planner:test -PliveApi
 app/               Android host: Compose UI (Ask, Can do, Keyring, Activity, Lab), the
-                   CalendarContract adapter, a scripted planner holding only an AgentPort,
-                   and Lab simulations. app/src/debug has an adb-only test driver.
+                   CalendarContract adapter, the Gmail adapter and test inbox, a scripted
+                   planner holding only an AgentPort, and Lab simulations. app/src/debug has an adb-only test driver.
 docs/
   design.md        Reasoning: thesis, concept stack, strategy, empirical findings
   phase0.md        What Phase 0 set out to prove, what it proved, and what it didn't
   decisions.md     Foundational implementation decisions (D1, D2, ...) and assumptions
+  gmail-setup.md   One-time Google Cloud setup to let Deputy read one Gmail label
   log.md           Running build log: what was built, what broke, what it taught
   architecture.svg Current architecture diagram
   agent_os_prototype_system_flow.{svg,png}

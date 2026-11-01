@@ -11,7 +11,7 @@ half of that question (authority, trust, and the interface between an agent and 
 does not control), and is designed to extend into the kernel-level half (a forked,
 agent-native OS) later.
 
-Status: Phase 0, hobby prototype, single user. Public from the first commit.
+Status: Phase 0 complete (v0.3, see `docs/phase0.md`); Phase 1 next. Hobby prototype, single user. Public from the first commit.
 
 ## Why
 
@@ -123,8 +123,11 @@ Kotlin and Gradle (wrapper 9.8.2, AGP 9.4.1, Kotlin 2.4.21), minSdk 29.
 adb install -r -g app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On an emulator, open the Lab tab and tap "Seed test calendar" to create a local calendar
-with sample events, then try the suggestions on the Ask tab.
+For the Claude planner, put `anthropic.apiKey=...` in `local.properties` (gitignored);
+without it the assistant is a keyword script. Holds and invites are written only to a calendar
+named "Deputy sandbox" (create it in Google Calendar; on an emulator, Lab → "Seed test
+calendar" creates a local one). Debug builds log every Claude exchange:
+`adb logcat -v raw -s DeputyLLM`.
 
 ## Repo layout
 
@@ -132,11 +135,14 @@ with sample events, then try the suggestions on the Ask tab.
 broker/            Pure Kotlin/JVM: the reference monitor. Capabilities, grants, Policy,
                    the journal, the fact store, inbound answering, and all user-facing
                    wording (broker/present). No Android imports.
+planner/           Pure Kotlin/JVM: the Claude planner (Messages API tool use), holding only
+                   an AgentPort. Live API test: ./gradlew :planner:test -PliveApi
 app/               Android host: Compose UI (Ask, Can do, Keyring, Activity, Lab), the
                    CalendarContract adapter, a scripted planner holding only an AgentPort,
                    and Lab simulations. app/src/debug has an adb-only test driver.
 docs/
   design.md        Reasoning: thesis, concept stack, strategy, empirical findings
+  phase0.md        What Phase 0 set out to prove, what it proved, and what it didn't
   decisions.md     Foundational implementation decisions (D1, D2, ...) and assumptions
   log.md           Running build log: what was built, what broke, what it taught
   architecture.svg Current architecture diagram

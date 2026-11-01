@@ -8,6 +8,13 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 — Phase 0 closed (v0.3)
+
+- Wrote `docs/phase0.md`: the claim, what is demonstrated, what the build taught, and what
+  isn't proved yet (containment of untrusted input, Phase 1's first job). Reframed the value:
+  not keeping data from the model, but bounding what can happen through it, whoever steers it.
+- Version 0.3 (build 6), tagged `v0.3`, pushed.
+
 ## 2026-10-31 — Validation on the phone, and what a refusal means
 
 - Walked the validation list on the Pixel; nearly everything behaved as expected. One test

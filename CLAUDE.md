@@ -51,7 +51,9 @@ Commands are listed in `app/src/debug/.../DebugDriver.kt`; results go to logcat 
 - Tag the milestone commit `vX.Y` and add a line to `docs/log.md`. The Lab screen shows the
   running version.
 - History: 0.1 was Phase 0 end to end (broker, Keyring, kill switch, calendar adapter). 0.2 adds
-  the Claude planner, links back from what Deputy creates, and the feedback round.
+  the Claude planner, links back from what Deputy creates, and the feedback round. 0.3 closes
+  Phase 0: follow-up conversations, sandbox calendar, LLM logs, sync fixes, cancelling invites
+  (`docs/phase0.md`).
 
 ## Commits
 

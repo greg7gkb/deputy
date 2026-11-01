@@ -23,8 +23,8 @@ android {
         targetSdk = 37
         // Versioning (CLAUDE.md): bump versionName for each milestone and versionCode on every
         // build installed on a phone (Android refuses an update with a lower code). Tag the commit vX.Y.
-        versionCode = 5
-        versionName = "0.2"
+        versionCode = 6
+        versionName = "0.3"
 
         // Links Deputy writes into what it creates (D19). An https App Link, verified by
         // /.well-known/assetlinks.json on this host, so calendar apps make it tappable.

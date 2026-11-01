@@ -150,6 +150,8 @@ data class BrokerState(
     val invites: Map<String, InviteRecord> = emptyMap(),
     /** Every message Deputy has read, by the handle the proposer was given (D25). */
     val messages: Map<MessageId, MailRecord> = emptyMap(),
+    /** Replies that failed after possibly going out; no second attempt (D27). */
+    val uncertainReplies: Set<MessageId> = emptySet(),
     /** (asker id, when) for every answered inbound question; the weekly budget counts these. */
     val inboundAnswered: List<Pair<String, Instant>> = emptyList(),
     val undone: Set<Long> = emptySet(),
@@ -182,7 +184,9 @@ data class BrokerState(
             if (e.answer != InboundAnswer.NOT_AVAILABLE && e.grantId != null) {
                 spend(e.grantId).copy(inboundAnswered = inboundAnswered + (e.asker.id to e.at))
             } else this
-        is Event.ActionRefused, is Event.ActionFailed, is Event.FactsRefreshed -> this
+        // A reply that failed may still have been sent (the call can finish after its timeout, D18).
+        is Event.ActionFailed -> (e.action as? Action.SendReply)?.let { copy(uncertainReplies = uncertainReplies + it.messageId) } ?: this
+        is Event.ActionRefused, is Event.FactsRefreshed -> this
     }.copy(lastEventAt = maxOf(lastEventAt ?: entry.event.at, entry.event.at))
 
     private fun spend(grantId: GrantId?): BrokerState {
@@ -523,7 +527,9 @@ class Broker(
                     val source = mail ?: error("no mail account is connected")
                     val reader = mailReader ?: error("no mail reader is configured")
                     val raw = adapterCall("the mail account", ADAPTER_TIMEOUT * 2) { source.recent(now - action.sinceDays.days, action.maxResults) }.take(action.maxResults)
-                    mailRead = raw.map { m -> readOne(reader, m, now) }
+                    // One budget for the whole read, since it runs under the broker's lock (D25).
+                    val started = kotlin.time.TimeSource.Monotonic.markNow()
+                    mailRead = raw.map { m -> readOne(reader, m, now, principal, source.source, READ_BUDGET - started.elapsedNow()) }
                     ActionResult.InboxRead(mailRead.map { it.summary() })
                 }
                 is Action.SendReply -> {
@@ -559,15 +565,16 @@ class Broker(
      * [MailGuard]; if it fails or hangs, the message counts as unread ("other") rather than
      * failing the whole read. Only the cleaned sender and subject are kept, for the user.
      */
-    private suspend fun readOne(reader: MailReader, m: RawMessage, now: Instant): MailRecord {
+    private suspend fun readOne(reader: MailReader, m: RawMessage, now: Instant, by: Principal, via: String, left: kotlin.time.Duration): MailRecord {
         val reading = try {
-            MailGuard.bound(adapterCall("the mail reader", READER_TIMEOUT) { reader.read(m, zone) }, now)
+            if (!left.isPositive()) error("the read ran out of time")
+            MailGuard.bound(adapterCall("the mail reader", minOf(READER_TIMEOUT, left)) { reader.read(m, zone) }, now)
         } catch (e: Exception) {
             MailReading(MailKind.OTHER)
         }
         return MailRecord(
             MessageId(newId("m")), m.adapterRef, MailGuard.display(m.from, MailGuard.MAX_FROM),
-            MailGuard.subject(m.subject, reading.kind), m.receivedAt, reading, reader.name, MailGuard.address(m.from),
+            MailGuard.subject(m.subject), m.receivedAt, reading, reader.name, MailGuard.address(m.from), by, now, via,
         )
     }
 
@@ -643,6 +650,7 @@ class Broker(
         now, zone, state.holds, principal,
         holdOwner = { hold -> hold.grantId?.let { state.grants[it]?.grant?.holder } },
         messages = state.messages,
+        uncertainReplies = state.uncertainReplies,
     )
 
     /** If the journal did not verify, nothing happens until a person looks (fail closed). */
@@ -677,6 +685,8 @@ class Broker(
         val ADAPTER_TIMEOUT = 10.seconds
         /** Per message. Generous, so an on-device model has room; the rule-based reader takes milliseconds. */
         val READER_TIMEOUT = 30.seconds
+        /** For all the messages in one read together, so the lock (and the kill switch) never waits long. */
+        val READ_BUDGET = 60.seconds
         const val BUSY_HORIZON_DAYS = 30
         const val MAX_PENDING_PER_PRINCIPAL = 5
         const val MAX_PROPOSAL_CHARS = 4_000

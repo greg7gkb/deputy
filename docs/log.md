@@ -8,6 +8,18 @@ than a success that did not.
 
 ---
 
+## 2026-11-01 — A review of the mail path
+
+- Asked a fresh reviewer to break D25 to D27. Nothing got words to the planner, but it found four
+  medium gaps (codes reaching the journal when the reader misses them, the read holding the
+  broker's lock, a timed-out reply being sent twice, quadratic HTML stripping) and eight small
+  ones (invisible tag characters, Kelvin-sign addresses, handles usable by any principal forever,
+  a misleadable approval card, and more). Fixed the four and most of the small ones; the rest
+  are recorded in D27's review section. 7 new tests.
+- The useful lesson: the containment claim held because it is a type, but everything *around* it
+  (what the journal keeps, what the person is shown, what happens on a timeout) is ordinary code
+  with ordinary bugs. The person's view is now the weaker side.
+
 ## 2026-11-01 — Replies, the round trip (0.4)
 
 - `email.send_reply` (D27): the planner names a message by handle and writes a body; the broker

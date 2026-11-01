@@ -19,6 +19,8 @@ data class PolicyContext(
     val holdOwner: (HoldRecord) -> Principal? = { null },
     /** Messages Deputy has read, by handle. A reply can only answer one of these. */
     val messages: Map<MessageId, MailRecord> = emptyMap(),
+    /** Messages whose reply failed in a way that may still have sent it. No second try (D27). */
+    val uncertainReplies: Set<MessageId> = emptySet(),
 )
 
 sealed interface Verdict {
@@ -132,6 +134,9 @@ object Policy {
                 val message = ctx.messages[action.messageId]
                 when {
                     message == null -> "that is not a message Deputy has read"
+                    message.readBy != null && message.readBy != ctx.principal -> "that message was read for someone else"
+                    message.readAt != null && ctx.now - message.readAt > 7.days -> "that message was read over a week ago; read the inbox again"
+                    action.messageId in ctx.uncertainReplies -> "an earlier reply to it may have gone out; check your sent mail"
                     message.replyTo == null -> "the message has no address Deputy can reply to"
                     message.reading.kind == MailKind.SECURITY_CODE -> "Deputy doesn't reply to code messages"
                     action.body.isBlank() || action.body.length > permit.maxBodyChars -> "the reply is empty or longer than ${permit.maxBodyChars} characters"
@@ -148,7 +153,7 @@ object Policy {
     fun isCleanBody(text: String) = text.none {
         (it.category == CharCategory.CONTROL && it != '\n') || it.category == CharCategory.FORMAT ||
             it.category == CharCategory.LINE_SEPARATOR || it.category == CharCategory.PARAGRAPH_SEPARATOR
-    }
+    } && text.indices.none { isHiddenUnit(text, it) }
 
     /** What a requester may even ask the user for. The user still sees and approves it. */
     fun validateGrantRequest(requester: Principal, request: GrantRequest): String? = when {
@@ -274,5 +279,19 @@ object Policy {
     fun isCleanText(text: String, max: Int) = text.isNotBlank() && text.length <= max && text.none {
         it.category == CharCategory.CONTROL || it.category == CharCategory.FORMAT ||
             it.category == CharCategory.LINE_SEPARATOR || it.category == CharCategory.PARAGRAPH_SEPARATOR
+    } && text.indices.none { isHiddenUnit(text, it) }
+
+    /**
+     * True if the UTF-16 unit at [i] belongs to something a person can't see but a machine can read:
+     * an unpaired surrogate, or a character in planes 14 to 16 (tag characters, variation selectors,
+     * private use). Checking one unit at a time misses these, since each half reads as SURROGATE.
+     */
+    fun isHiddenUnit(text: String, i: Int): Boolean {
+        val c = text[i]
+        return when {
+            c.isHighSurrogate() -> i + 1 >= text.length || !text[i + 1].isLowSurrogate() || (c.code - 0xD800) shr 6 >= 13
+            c.isLowSurrogate() -> i == 0 || !text[i - 1].isHighSurrogate() || isHiddenUnit(text, i - 1)
+            else -> false
+        }
     }
 }

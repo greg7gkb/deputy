@@ -47,6 +47,9 @@ object MailRules {
 
     /** A code word near a 4 to 8 digit number, either way round. */
     private val CODE = listOf(
+        Regex("""\b(one-time password|one time password|passcode|password|token|code|otp|pin|verification)\b\D{0,30}\d(?:[ \-]?\d){3,7}\b"""),
+        Regex("""\buse \d(?:[ \-]?\d){3,7}\b"""),
+        Regex("""\b\d(?:[ \-]?\d){3,7}\b\D{0,30}\b(is your|to sign in|to log in|to verify)\b"""),
         Regex("""\b(code|passcode|otp|pin|verification)\b\D{0,30}\b\d{4,8}\b"""),
         Regex("""\b\d{4,8}\b\D{0,30}\b(is your|code|passcode)\b"""),
         Regex("""\b\d{3} \d{3}\b\D{0,30}\b(is your|code)\b"""),

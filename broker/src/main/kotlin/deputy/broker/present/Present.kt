@@ -342,9 +342,12 @@ object Narrator {
                     // The recipient comes from the message, not the proposer; the person sees exactly who (D27).
                     is Action.SendReply -> {
                         val m = messages[a.messageId]
+                        // Untrusted text gets rows of its own, so a crafted subject can't pose as Deputy's wording.
                         buildList {
                             add("To" to (m?.replyTo ?: "unknown"))
-                            add("Replying to" to (m?.let { "\"${it.subject}\" from ${it.from}" } ?: "a message"))
+                            m?.via?.let { add("Sends via" to it) }
+                            add("Their subject" to (m?.subject ?: "unknown"))
+                            add("Their From line" to (m?.from ?: "unknown"))
                             add("Message" to a.body)
                             if (m?.reading?.addressesAssistant == true) add("Careful" to "Deputy's reader flagged that message as written to instruct an AI assistant.")
                             add("Undo" to "Not possible: email can't be unsent")

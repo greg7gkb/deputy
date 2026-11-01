@@ -94,6 +94,11 @@ data class MailRecord(
     val reader: String,
     /** The bare address in From, if it is one. The only address a reply can go to (D27). */
     val replyTo: String? = null,
+    /** Who the message was read for. Only they can reply to it (D27). */
+    val readBy: Principal? = null,
+    val readAt: SInstant? = null,
+    /** The mailbox it came from, e.g. "Gmail, label "Deputy"". A reply goes back through it. */
+    val via: String? = null,
 ) {
     /** The proposer's side: the same message with every untrusted string removed. */
     fun summary() = MailSummary(messageId, receivedAt, reading.kind, reading.proposedTimes, reading.durationMinutes, reading.addressesAssistant)
@@ -138,9 +143,10 @@ object MailGuard {
 
     /** One line for a person to read: control and format characters out, whitespace collapsed, shortened. */
     fun display(text: String, max: Int): String {
-        val clean = text.map { c ->
+        val clean = text.mapIndexed { i, c ->
             if (c.category == CharCategory.CONTROL || c.category == CharCategory.FORMAT ||
-                c.category == CharCategory.LINE_SEPARATOR || c.category == CharCategory.PARAGRAPH_SEPARATOR) ' ' else c
+                c.category == CharCategory.LINE_SEPARATOR || c.category == CharCategory.PARAGRAPH_SEPARATOR ||
+                Policy.isHiddenUnit(text, i)) ' ' else c
         }.joinToString("").replace(Regex("\\s+"), " ").trim()
         return if (clean.length <= max) clean.ifEmpty { "(none)" } else clean.take(max - 1).trimEnd() + "…"
     }
@@ -149,15 +155,21 @@ object MailGuard {
     fun address(from: String): String? {
         // One sender, one address. A From naming several is either broken or an attempt to add recipients.
         if (from.count { it == '@' } != 1) return null
-        val candidate = Regex("<([^<>]+)>").findAll(from).lastOrNull()?.groupValues?.get(1) ?: from
-        return candidate.trim().lowercase().takeIf { EMAIL.matches(it) }
+        val candidate = Regex("<([^<>]+)>").findAll(from).lastOrNull()?.groupValues?.get(1)?.trim() ?: from.trim()
+        // ASCII before lowercasing: Unicode case folding can turn a lookalike into a different, real address.
+        if (candidate.any { it.code > 0x7E || it.code < 0x21 }) return null
+        return candidate.lowercase().takeIf { EMAIL.matches(it) }
     }
 
     private val EMAIL = Regex("[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\\.[a-z0-9-]{1,63}){1,8}")
 
-    /** A code message's subject keeps its shape but not its digits, so the journal never holds the code. */
-    fun subject(subject: String, kind: MailKind): String {
-        val shown = display(subject, MAX_SUBJECT)
-        return if (kind == MailKind.SECURITY_CODE) shown.replace(Regex("\\d{3,}")) { "•".repeat(it.value.length) } else shown
-    }
+    /**
+     * A subject keeps its shape but not its long numbers (four or more digits, possibly grouped),
+     * whatever the reader said: a reader can miss a code, or fail, and the journal keeps what it
+     * is given forever. Costs the odd year or order number.
+     */
+    fun subject(subject: String): String =
+        display(subject, MAX_SUBJECT).replace(LONG_NUMBER) { m -> m.value.map { if (it.isDigit()) '•' else it }.joinToString("") }
+
+    private val LONG_NUMBER = Regex("""\p{Nd}(?:[ \-.]?\p{Nd}){3,}""")
 }

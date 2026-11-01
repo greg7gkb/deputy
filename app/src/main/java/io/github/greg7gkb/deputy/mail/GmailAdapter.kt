@@ -149,7 +149,7 @@ class GmailAdapter(
         val payload = m["payload"]?.jsonObject ?: return null
         val headers = (payload["headers"] as? JsonArray).orEmpty().map { it.jsonObject }
         fun header(name: String) = headers.firstOrNull { it.str("name").equals(name, ignoreCase = true) }?.str("value").orEmpty()
-        val body = part(payload, "text/plain") ?: part(payload, "text/html")?.let(::stripHtml) ?: ""
+        val body = part(payload, "text/plain") ?: part(payload, "text/html")?.take(MAX_HTML)?.let(::stripHtml) ?: ""
         return RawMessage(
             adapterRef = m.str("id"),
             from = header("From"),
@@ -227,5 +227,7 @@ class GmailAdapter(
         private const val API = "https://gmail.googleapis.com/gmail/v1/users/me"
         private const val TIMEOUT_MS = 8_000
         private const val MAX_BODY = 8_000
+        /** stripHtml is quadratic on unclosed tags, so cap its input before it runs. */
+        private const val MAX_HTML = 64_000
     }
 }

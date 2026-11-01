@@ -207,7 +207,52 @@ class ReplyTest {
         assertTrue(rig.mail.sent.isEmpty())
     }
 
+    @Test fun `a code the reader missed still never reaches the journal`() = runTest {
+        // A reader that fails on everything: every message is "other", so nothing is masked by kind.
+        val rig = Rig(reader = object : MailReader {
+            override val name = "failing reader"
+            override suspend fun read(message: RawMessage, zone: TimeZone): MailReading = error("crashed")
+        })
+        rig.mail.messages += RawMessage("x", "Bank <b@bank.example>", "Your code is 482 913 (or 4829-13)", "", rig.clock.now)
+        rig.agent.propose(rig.key(GrantTemplates.mailReading()), Action.ReadInbox())
+        val journal = (rig.storage as InMemoryJournalStorage).lines.joinToString("\n")
+        assertFalse("482 913" in journal || "4829-13" in journal || "482913" in journal, journal)
+    }
+
+    @Test fun `a reply is the reader's own, recent, and never retried after an uncertain failure`() = runTest {
+        val rig = Rig()
+        val ids = rig.readSamples()
+        val replyKey = rig.key(GrantTemplates.mailReplies())
+        fun refused(o: Outcome) = assertIs<Outcome.Refused>(o).detail
+        // Another agent with its own reply key can't answer mail read for the assistant.
+        val other = Principal(Principal.Kind.ASSISTANT, "other", "Another agent")
+        val otherKey = (rig.user.mintGrant(other, Direction.OUTBOUND, GrantTemplates.mailReplies()) as Outcome.GrantIssued).grantId
+        assertEquals("that message was read for someone else",
+            refused(rig.broker.agentPort(other).propose(otherKey, Action.SendReply(ids.getValue("sample-dana"), "hi"))))
+        // A send that fails may have gone out anyway; the same message can't be answered again.
+        rig.mail.failSends = true
+        val asked = assertIs<Outcome.AwaitingUser>(rig.agent.propose(replyKey, Action.SendReply(ids.getValue("sample-dana"), "hi")))
+        assertIs<Outcome.Failed>(rig.user.approve(asked.requestId))
+        assertEquals("an earlier reply to it may have gone out; check your sent mail",
+            refused(rig.agent.propose(replyKey, Action.SendReply(ids.getValue("sample-dana"), "hi"))))
+        // And a handle goes stale after a week.
+        rig.clock.advance(kotlin.time.Duration.parse("8d"))
+        val fresh = rig.key(GrantTemplates.mailReplies())
+        assertEquals("that message was read over a week ago; read the inbox again",
+            refused(rig.agent.propose(fresh, Action.SendReply(ids.getValue("sample-sam"), "hi"))))
+        assertTrue(rig.mail.sent.isEmpty())
+    }
+
+    @Test fun `hidden characters are refused in replies and stripped from display`() {
+        val tagged = "ok" + String(Character.toChars(0xE0041)) + String(Character.toChars(0xE0042))
+        assertFalse(Policy.isCleanBody(tagged))
+        assertFalse(Policy.isCleanText(tagged, 60))
+        assertTrue(Policy.isCleanBody("Sounds good 👍"))
+        assertEquals("ok", MailGuard.display(tagged, 80))
+    }
+
     @Test fun `addresses are parsed strictly`() {
+        assertEquals(null, MailGuard.address("Kate <kate@\u212Aorp.example>"), "a Kelvin sign is not a k")
         assertEquals("dana@example.com", MailGuard.address("Dana Lee <Dana@Example.com>"))
         assertEquals("x@y.org", MailGuard.address("x@y.org"))
         assertEquals(null, MailGuard.address("Dana Lee"))

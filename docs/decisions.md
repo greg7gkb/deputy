@@ -434,3 +434,40 @@ The round trip for mail: `email.send_reply` (`Action.SendReply(messageId, body)`
 - **The proposer gets back which message was answered, not to whom.**
 - The test inbox's replies never leave the phone; a reply goes back through the mailbox its message
   came from, so a test message can't produce a real email.
+
+### What the review of D25 to D27 changed (2026-11-01)
+
+An independent review of the mail path found no way to get words to the planner, and these gaps:
+
+- **Codes could reach the journal** when the reader missed a format ("use 482913 to sign in",
+  "482 913", "482-913") or failed. Subjects now have every long number masked whatever the reader
+  said, and the rule-based reader knows more code formats. Alphanumeric codes are still missed.
+- **The whole read ran under the broker's lock**, so a slow on-device reader could stall approvals
+  and the kill switch for minutes. A read now has one 60-second budget for all its messages
+  (messages past it count as "other"). Still under the lock: up to 20 s of mailbox call plus
+  that budget. The real fix, reading outside the lock and journaling inside it, waits for the
+  model reader.
+- **A reply that timed out could have been sent, then sent again.** A failed reply now blocks
+  further replies to that message ("check your sent mail").
+- **Handles were anyone's, forever.** A message can now be replied to only by the principal it was
+  read for, and only within 7 days of the read.
+- **Invisible characters** (tag characters, planes 14 to 16, unpaired surrogates) got past the
+  text checks, which looked at one UTF-16 unit at a time. Refused in replies and labels, stripped
+  from display.
+- **Unicode case folding** could turn a lookalike address into a different real one (a Kelvin sign
+  lowercases to "k"). Addresses must be ASCII before they're lowercased.
+- **The approval card** now gives the sender's subject and From line rows of their own (so a
+  crafted subject can't read as Deputy's wording) and says which mailbox the reply goes through.
+- **HTML stripping** was quadratic on unclosed tags; its input is capped at 64 KB.
+
+Recorded, not changed:
+
+- **From is not authenticated.** "Replies go only to whoever wrote" means "to the address in From",
+  which a spoofer chooses. The tap, showing the real address, is the defence; showing Gmail's
+  DMARC result on the card would help.
+- **Typed slots still carry bits.** An attacker controls up to five times per message (to the
+  minute), a kind, the flag and the order. That is a narrow channel for words but not zero, and a
+  model reader could widen it. Coarsening times to 15 minutes would shrink it.
+- **Activity mixes untrusted text with Deputy's narration** in one block; a crafted subject could
+  imitate a line of it. Styled, separate fields would fix it.
+

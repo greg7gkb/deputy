@@ -56,6 +56,16 @@ class RuleMailReaderTest {
         assertEquals(MailReading(MailKind.OTHER), readings().getValue("sample-news"))
     }
 
+    @Test fun `common code formats read as codes`() {
+        val zero = LocalDate(2026, 11, 2)
+        for (text in listOf("your one-time password is 482913", "use 482913 to sign in", "your code: 482 913",
+            "your code is 482-913", "login token 482913", "Your code is 48291356")) {
+            assertEquals(MailKind.SECURITY_CODE, MailRules.read(text, "", now, zone).kind, text)
+        }
+        assertEquals(MailKind.OTHER, MailRules.read("Order shipped", "Your order 2026 ships Monday", now, zone).kind)
+        assertTrue(zero.year == 2026)
+    }
+
     @Test fun `durations and clock times`() {
         assertEquals(45, MailRules.duration("a 45-minute call"))
         assertEquals(60, MailRules.duration("an hour or so"))

@@ -67,7 +67,9 @@ class FakeMail(val messages: MutableList<RawMessage> = mutableListOf()) : MailAd
 
     /** (replying to, to, body) for every reply sent. */
     val sent = mutableListOf<Triple<String, String, String>>()
+    var failSends = false
     override suspend fun sendReply(adapterRef: String, to: String, body: String): String {
+        if (failSends) error("the send timed out")
         sent += Triple(adapterRef, to, body)
         return "sent-${sent.size}"
     }

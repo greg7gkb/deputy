@@ -271,3 +271,21 @@ the app who opens a link gets a 404 page explaining what it is. `deputy://` is s
 Also in this change: a `Principal`'s identity is its kind and id, not its display name, so
 relabelling an actor ("Assistant (scripted)") can never move authority. And every screen now
 reads newest first, with each Ask request as its own card.
+
+## D20. The cloud planner is Claude, through the API, with a key from local.properties (default)
+
+Chosen 2026-10-31: the first real planner is Claude through the Messages API with tool use
+(model `claude-opus-5-5` unless changed deliberately). It replaces `StubPlanner` behind the same
+`AgentPort`: Deputy's typed actions become its tools, and the broker still decides everything.
+What it sees: the user's request, the capability catalog, its own keys' summaries, and typed
+results (e.g. three open slots). Never titles, message content, codes or credentials.
+
+- **Network.** The app declares `INTERNET` for this and nothing else. It is a normal Android
+  permission (granted at install, no prompt). The broker never touches the network.
+- **The key.** `anthropic.apiKey` in `local.properties` (gitignored) is compiled into
+  `BuildConfig.ANTHROPIC_API_KEY` for the debug build. Anyone holding the APK could extract it,
+  which is acceptable only because this APK is sideloaded to one phone and never published.
+  Mitigation: a key from a dedicated workspace with a monthly spend limit, so a leaked key is
+  bounded and can be revoked without touching anything else. Upgrade path: enter the key in the
+  app and keep it in the Android Keystore, or put a small relay in front that holds it.
+- **The model never holds the key.** The app makes the API call; the model only proposes.

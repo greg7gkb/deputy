@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- The cloud planner (Phase 1) is the only thing that uses the network: it sends your
+         request and typed results to the Claude API. A "normal" permission: granted at install. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- The calendar adapter (tier 1). Read for busy times only; write for holds and invites. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />

@@ -1,9 +1,16 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Secrets live in local.properties (gitignored), never in the repo.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -23,6 +30,10 @@ android {
         buildConfigField("String", "LINK_PATH", "\"/deputy/activity/\"")
         manifestPlaceholders["linkHost"] = "greg7gkb.github.io"
         manifestPlaceholders["linkPath"] = "/deputy/activity/"
+
+        // The cloud planner's key (D20). Empty or the placeholder means "no planner configured".
+        val apiKey = localProps.getProperty("anthropic.apiKey", "").takeUnless { it.startsWith("REPLACE_") }.orEmpty()
+        buildConfigField("String", "ANTHROPIC_API_KEY", "\"$apiKey\"")
     }
 
     buildTypes {

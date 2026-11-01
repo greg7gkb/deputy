@@ -292,8 +292,10 @@ results (e.g. three open slots). Never titles, message content, codes or credent
 
 ## D21. Every Claude exchange is logged in debug builds (default)
 
-Debug builds write each request and response, as the JSON that goes over the wire, to logcat
-under the tag `DeputyLLM` (long messages split into numbered parts). Purpose: being able to see
+Debug builds log every exchange twice: as plain text under the logcat tag `DeputyLLM` (your
+message, what Claude said, each tool call it made and what Deputy answered, tokens and stop
+reason; the static system prompt and tool list are left out), and as the exact JSON sent and
+received under `DeputyLLMRaw` (long messages split into numbered parts). Purpose: being able to see
 exactly what the planner was told and what it said. It contains the request text, the system
 prompt and tools, key ids, and the free times Deputy returned; never the API key (it travels in a
 header, which isn't logged) and never calendar titles (the planner never has them). Logcat is

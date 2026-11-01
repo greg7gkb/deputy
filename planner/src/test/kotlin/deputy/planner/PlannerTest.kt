@@ -72,7 +72,7 @@ class LiveClaudePlannerTest {
         val calendar = FakeCalendar()
         val broker = Broker(InMemoryJournalStorage(), InMemoryFactStore(), calendar, zone = ZONE)
         val transcript = Transcript()
-        val planner = ClaudePlanner(broker.agentPort(Principal.Assistant), AnthropicOkHttpClient.fromEnv(), ZONE, transcript)
+        val planner = ClaudePlanner(broker.agentPort(Principal.Assistant), AnthropicOkHttpClient.fromEnv(), ZONE, transcript, readableLog = { println("LOG| $it") })
 
         // The "user": approves whatever the broker asks, as a tap would.
         val approver = launch {

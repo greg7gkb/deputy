@@ -45,8 +45,10 @@ class ClaudePlanner(
     private val clock: Clock = Clock.System,
     val model: String = DEFAULT_MODEL,
     private val maxTurns: Int = 12,
-    /** Receives every request and response as JSON, for debugging (D21). Never sees the API key. */
-    private val wireLog: ((String) -> Unit)? = null,
+    /** Plain-text record of what crosses the wire: messages, tool calls, results (D21). */
+    private val readableLog: ((String) -> Unit)? = null,
+    /** Every request and response as the exact JSON sent and received (D21). Never sees the API key. */
+    private val rawLog: ((String) -> Unit)? = null,
 ) : Planner {
     override val name = "Claude"
     override val suggestions = listOf(
@@ -98,6 +100,8 @@ class ClaudePlanner(
         val messages = history
         messages += MessageParam.ofUser("Now: ${now.dayOfWeek.name.lowercase()} ${now.toString().take(16)} in $zone.\n\n$request")
         exchange++
+        readableLog?.invoke("── exchange $exchange ${if (messages.size > 1) "(continuing)" else "(new conversation)"} ──")
+        readableLog?.invoke("You → Claude: $request")
         var inputTokens = 0L
         var outputTokens = 0L
         var cachedTokens = 0L
@@ -116,9 +120,10 @@ class ClaudePlanner(
                 .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
                 .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
                 .build()
-            wireLog?.invoke("→ exchange $exchange, round ${it + 1}, request: " + jsonMapper().writeValueAsString(params._body()))
+            rawLog?.invoke("→ exchange $exchange, round ${it + 1}, request: " + jsonMapper().writeValueAsString(params._body()))
             val response = withContext(Dispatchers.IO) { client.messages().create(params) }
-            wireLog?.invoke("← exchange $exchange, round ${it + 1}, response: " + jsonMapper().writeValueAsString(response))
+            rawLog?.invoke("← exchange $exchange, round ${it + 1}, response: " + jsonMapper().writeValueAsString(response))
+            readableLog?.let { logReadable(it, response) }
             inputTokens += response.usage().inputTokens() + response.usage().cacheReadInputTokens().orElse(0L) +
                 response.usage().cacheCreationInputTokens().orElse(0L)
             cachedTokens += response.usage().cacheReadInputTokens().orElse(0L)
@@ -130,7 +135,11 @@ class ClaudePlanner(
 
             when (response.stopReason().orElse(null)) {
                 StopReason.TOOL_USE -> {
-                    val results = response.content().mapNotNull { it.toolUse().orElse(null) }.map { execute(it) }
+                    val results = response.content().mapNotNull { it.toolUse().orElse(null) }.map { call ->
+                        execute(call).also { result ->
+                            readableLog?.invoke("Deputy → Claude (${call.name()}): " + (result.toolResult().orElse(null)?.content()?.orElse(null)?.string()?.orElse(null) ?: "?"))
+                        }
+                    }
                     messages += MessageParam.ofUserOfContentBlockParams(results)
                 }
                 StopReason.REFUSAL -> { finish("Claude declined this request.", inputTokens, outputTokens, cachedTokens); return false }
@@ -140,6 +149,16 @@ class ClaudePlanner(
         }
         finish("Stopped after $maxTurns rounds without finishing.", inputTokens, outputTokens, cachedTokens)
         return false
+    }
+
+    private fun logReadable(log: (String) -> Unit, response: com.anthropic.models.messages.Message) {
+        response.content().forEach { block ->
+            block.text().ifPresent { if (it.text().isNotBlank()) log("Claude: ${it.text().trim()}") }
+            block.toolUse().ifPresent { log("Claude → Deputy: ${it.name()} ${jsonMapper().writeValueAsString(it._input())}") }
+            block.thinking().ifPresent { if (it.thinking().isNotBlank()) log("Claude (thinking): ${it.thinking().trim()}") }
+        }
+        val u = response.usage()
+        log("   [stop: ${response.stopReason().map { it.toString() }.orElse("?")} · ${u.inputTokens() + u.cacheReadInputTokens().orElse(0L) + u.cacheCreationInputTokens().orElse(0L)} tokens in, ${u.outputTokens()} out]")
     }
 
     /** One tool call, through the broker. Waits for the user when the broker asks them. */

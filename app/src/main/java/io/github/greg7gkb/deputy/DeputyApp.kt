@@ -39,16 +39,17 @@ class DeputyApp : Application() {
     }
 
     /**
-     * Every Claude request and response, as JSON, to logcat under [LLM_TAG] (D21). Debug builds
-     * only; logcat lines are capped near 4 KB, so long messages are split and numbered.
+     * Claude exchanges to logcat (D21), debug builds only: plain text under [LLM_TAG], the exact
+     * JSON under [LLM_RAW_TAG]. Logcat caps lines near 4 KB, so long messages are split and numbered.
      */
-    private fun logWire(message: String) {
+    private fun logChunked(tag: String, message: String) {
         val parts = message.chunked(3_500)
-        parts.forEachIndexed { i, part -> Log.d(LLM_TAG, if (parts.size == 1) part else "[${i + 1}/${parts.size}] $part") }
+        parts.forEachIndexed { i, part -> Log.i(tag, if (parts.size == 1) part else "[${i + 1}/${parts.size}] $part") }
     }
 
     companion object {
         const val LLM_TAG = "DeputyLLM"
+        const val LLM_RAW_TAG = "DeputyLLMRaw"
 
         /** The rule-breaking script's identity. Never the assistant's. */
         val PROBE = Principal(Principal.Kind.ASSISTANT, "scripted-test", "Scripted test")
@@ -86,7 +87,8 @@ class DeputyApp : Application() {
         planner = if (BuildConfig.ANTHROPIC_API_KEY.isNotEmpty()) {
             ClaudePlanner(
                 assistant, AnthropicOkHttpClient.builder().apiKey(BuildConfig.ANTHROPIC_API_KEY).build(), broker.zone, transcript,
-                wireLog = if (BuildConfig.DEBUG) ::logWire else null,
+                readableLog = if (BuildConfig.DEBUG) { m -> logChunked(LLM_TAG, m) } else null,
+                rawLog = if (BuildConfig.DEBUG) { m -> logChunked(LLM_RAW_TAG, m) } else null,
             )
         } else {
             StubPlanner(assistant, broker.zone, transcript)

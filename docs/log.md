@@ -8,6 +8,20 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 — Validation on the phone, and what a refusal means
+
+- Walked the validation list on the Pixel; nearly everything behaved as expected. One test
+  clarified the model: "invite someone the key doesn't name" doesn't produce a refusal with
+  Claude, because a well-behaved planner doesn't stretch a key it holds; it asks for a new key
+  naming the new person, and that request, which the user sees and decides on, is the
+  protection. Refusals show up when a planner overreaches, which Claude hasn't and the
+  scripted test does on purpose.
+- Recorded the stance on MCP (D24): none in the authority path; MCP only behind the broker or
+  with Deputy as the server.
+- Where Phase 0 stands: the plumbing and the UX of governed authority are shown end to end
+  with a real model on a real calendar. Not yet shown: containment of *untrusted input*, since
+  the planner has so far read only the user's own requests. That is Phase 1's first job.
+
 ## 2026-10-31 — Writes weren't reaching Google
 
 - On the Pixel, an approved invite didn't appear in Google Calendar. The planner log showed

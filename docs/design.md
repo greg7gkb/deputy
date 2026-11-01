@@ -85,6 +85,14 @@ planner that holds only an `AgentPort` (`decisions.md` D4, D5).
   notifications), so a useful product can probably live mostly in tiers 1 and 2,
   with third-party apps reached through tiers 3 and 4.
 
+- **Tools, and where MCP fits.** The planner gets Deputy's capabilities as ordinary tool
+  definitions whose calls come back to the app, not as MCP servers. Most MCP servers hold
+  credentials and act when the model calls them, which would put the model one hop from the
+  world with no broker in between. MCP belongs either behind the broker (an MCP server as one
+  more adapter) or in front of it (Deputy itself as an MCP server, offering its catalog to any
+  assistant under the user's keys). The second is the most direct form of the "broker as a
+  library" strategy in section 6. Details in `decisions.md` D24.
+
 ## 5. The scenarios (what the UX has to prove)
 
 Single-user (the wedge, and what belongs in the OS):

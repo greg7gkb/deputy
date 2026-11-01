@@ -331,3 +331,24 @@ button in Activity. It is the user's authority only, like Undo: no permit covers
 `calendar.cancel_invite`, so the planner can't propose it, and the button needs a second tap
 because it notifies people. Before deleting, the adapter checks the event is still the one Deputy
 made (same id, calendar and times) without reading its title (D9).
+
+## D24. No MCP in the authority path; where MCP could fit (firm)
+
+As of 0.2 Deputy uses no MCP. The planner uses Messages API tool use with six tools the app
+defines itself; every call returns to the app, goes through the broker, and only then reaches an
+adapter.
+
+The rule: **the planner is never connected directly to an MCP server**, nor to the API's
+server-side MCP connector. An MCP server typically holds credentials and acts when the model
+calls it, so a direct connection would let the model act without the broker, which is the
+vulnerability Deputy exists to contain. MCP fits only with the broker in the middle:
+
+- **Deputy as an MCP client:** an MCP server becomes one more adapter behind the broker. The
+  planner still sees only Deputy's typed tools, and keys are checked before the server is called.
+- **Deputy as an MCP server:** Deputy exposes its capability catalog over MCP, so any
+  MCP-speaking assistant can use the phone through Deputy, still under the user's keys and the
+  Keyring. A concrete form of the "broker as infrastructure" path (design.md section 6), and it
+  would make Deputy model-agnostic.
+
+Neither is needed yet. Gmail (Phase 1) will be a direct Gmail API adapter behind the broker,
+not a Gmail MCP server.

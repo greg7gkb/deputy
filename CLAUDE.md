@@ -24,6 +24,8 @@ build order. Treat its hard rules as non-negotiable. This file adds how to work 
   journal. Never add mutable broker state the journal can't reproduce.
 - New capabilities are new `Action` and `Permit` types with checks in `Policy`; there is no
   free-text or catch-all action (D7).
+- Never connect the planner directly to an MCP server or the API's MCP connector; MCP only
+  goes behind the broker as an adapter, or in front of it with Deputy as the server (D24).
 - Adapters read the minimum. The calendar adapter must never query titles, descriptions,
   locations or attendees (D9).
 - Run `./gradlew :broker:test` after any broker change; add a test for every new rule.

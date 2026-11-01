@@ -1,6 +1,7 @@
 package io.github.greg7gkb.deputy
 
 import android.Manifest
+import android.accounts.AccountManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import deputy.broker.Artifacts
@@ -23,6 +24,10 @@ class MainActivity : ComponentActivity() {
     /** The artifact a deputy://activity/<id> link asked to see, until the person moves on. */
     private var focusArtifact by mutableStateOf<String?>(null)
     private val askForCalendar = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { checkCalendar() }
+    /** Android's own account chooser; picking an account makes it visible to Deputy (for sync requests only). */
+    private val chooseAccount = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { accountTick++ }
+    /** Bumped after the chooser returns, so the UI re-checks account visibility. */
+    private var accountTick by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val bars = SystemBarStyle.light(BACKGROUND, BACKGROUND)
@@ -39,6 +44,13 @@ class MainActivity : ComponentActivity() {
                     onRequestCalendar = { askForCalendar.launch(calendarPermissions) },
                     focusArtifact = focusArtifact,
                     onFocusDone = { focusArtifact = null },
+                    accountTick = accountTick,
+                    onChooseAccount = {
+                        val target = app.calendarAdapter.writableCalendar()?.account
+                        chooseAccount.launch(AccountManager.newChooseAccountIntent(
+                            target, null, arrayOf(target?.type ?: "com.google"), null, null, null, null,
+                        ))
+                    },
                 )
             }
         }

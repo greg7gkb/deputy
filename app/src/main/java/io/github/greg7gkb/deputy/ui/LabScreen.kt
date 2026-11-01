@@ -26,6 +26,7 @@ import deputy.broker.Provenance
 import deputy.broker.present.Format
 import io.github.greg7gkb.deputy.BuildConfig
 import deputy.planner.ClaudePlanner
+import androidx.compose.runtime.remember
 import io.github.greg7gkb.deputy.DeputyApp
 import kotlinx.datetime.DayOfWeek
 import java.time.LocalTime
@@ -38,7 +39,14 @@ private data class Sim(val label: String, val explain: String, val run: () -> Un
  * the real broker, so what it does shows up in Activity and the Keyring like anything else.
  */
 @Composable
-fun LabScreen(app: DeputyApp, snapshot: BrokerSnapshot, log: SnapshotStateList<String>, onShowAsk: () -> Unit) {
+fun LabScreen(
+    app: DeputyApp,
+    snapshot: BrokerSnapshot,
+    log: SnapshotStateList<String>,
+    onShowAsk: () -> Unit,
+    accountTick: Int = 0,
+    onChooseAccount: () -> Unit = {},
+) {
     val clock = DateTimeFormatter.ofPattern("HH:mm:ss")
     fun record(label: String, block: suspend () -> String) {
         app.act(block) { result ->
@@ -89,6 +97,20 @@ fun LabScreen(app: DeputyApp, snapshot: BrokerSnapshot, log: SnapshotStateList<S
                     style = Type.Mono,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                // Re-checked whenever the account chooser returns.
+                val canPush = remember(accountTick, snapshot) { app.calendarAdapter.canSeeAccount() }
+                if (!canPush) {
+                    DCard(background = Palette.AmberBg, border = Palette.AmberBg, padding = 12.dp, modifier = Modifier.padding(top = 10.dp)) {
+                        Text("Changes reach Google slowly", style = Type.CardTitle.copy(fontSize = 14.5.sp, color = Palette.Amber))
+                        Text(
+                            "Android ignores Deputy's requests to sync your calendar until you pick your Google account for it once. " +
+                                "That only lets Deputy ask for a sync; it gets no access to the account's data.",
+                            style = Type.Sub.copy(color = Palette.Amber),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+                        )
+                        SmallButton("Choose account", onClick = onChooseAccount, color = Palette.Amber)
+                    }
+                }
             }
         }
         item { SimGroup("Calendar", calendar) }

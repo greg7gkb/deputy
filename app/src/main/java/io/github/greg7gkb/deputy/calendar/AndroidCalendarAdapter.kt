@@ -2,6 +2,7 @@ package io.github.greg7gkb.deputy.calendar
 
 import android.Manifest
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.os.Bundle
 import android.util.Log
@@ -134,6 +135,11 @@ class AndroidCalendarAdapter(
      */
     private fun requestUpload() {
         val account = writableCalendar()?.account ?: return
+        if (!canSeeAccount(account)) {
+            // Android silently ignores sync requests for accounts an app can't see (found on the Pixel).
+            Log.w("DeputyCalendar", "can't push to Google yet: choose the account for Deputy in Lab")
+            return
+        }
         runCatching {
             ContentResolver.requestSync(account, CalendarContract.AUTHORITY, Bundle().apply {
                 putBoolean(ContentResolver.SYNC_EXTRAS_UPLOAD, true)
@@ -142,6 +148,14 @@ class AndroidCalendarAdapter(
             })
         }.onFailure { Log.w("DeputyCalendar", "couldn't request a calendar sync: ${it.message}") }
     }
+
+    /**
+     * Whether Android lets Deputy see [account]. Since Android 8, an app sees a Google account only
+     * after the person picks it for that app once (Lab offers the system chooser). Seeing it gives
+     * Deputy no access to the account's data; it only lets Deputy ask for a calendar sync.
+     */
+    fun canSeeAccount(account: Account? = writableCalendar()?.account): Boolean =
+        account == null || AccountManager.get(context).getAccountsByType(account.type).any { it.name == account.name }
 
     /** The calendar Deputy writes to, and the account that syncs it (null for device-only calendars). */
     data class Target(val id: Long, val description: String, val account: Account?)

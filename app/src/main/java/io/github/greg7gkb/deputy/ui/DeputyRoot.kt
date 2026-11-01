@@ -40,7 +40,15 @@ enum class Tab(val label: String) { ASK("Ask"), CAN_DO("Can do"), KEYRING("Keyri
  * every tab because the broker can ask at any time (the planner suspends until you answer).
  */
 @Composable
-fun DeputyRoot(app: DeputyApp, calendarGranted: Boolean, onRequestCalendar: () -> Unit, focusArtifact: String? = null, onFocusDone: () -> Unit = {}) {
+fun DeputyRoot(
+    app: DeputyApp,
+    calendarGranted: Boolean,
+    onRequestCalendar: () -> Unit,
+    focusArtifact: String? = null,
+    onFocusDone: () -> Unit = {},
+    accountTick: Int = 0,
+    onChooseAccount: () -> Unit = {},
+) {
     val snapshot by app.broker.snapshots.collectAsStateWithLifecycle()
     val items = remember(snapshot) { Narrator.narrate(snapshot) }
     var tab by rememberSaveable { mutableStateOf(Tab.ASK) }
@@ -56,7 +64,7 @@ fun DeputyRoot(app: DeputyApp, calendarGranted: Boolean, onRequestCalendar: () -
                     Tab.CAN_DO -> CanDoScreen()
                     Tab.KEYRING -> KeyringScreen(app, snapshot)
                     Tab.ACTIVITY -> ActivityScreen(app, snapshot, items, focusArtifact)
-                    Tab.LAB -> LabScreen(app, snapshot, labLog, onShowAsk = { tab = Tab.ASK })
+                    Tab.LAB -> LabScreen(app, snapshot, labLog, onShowAsk = { tab = Tab.ASK }, accountTick = accountTick, onChooseAccount = onChooseAccount)
                 }
             }
             TabBar(tab) { tab = it; onFocusDone() }

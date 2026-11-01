@@ -35,6 +35,9 @@ class Lab(private val context: Context, private val broker: Broker) {
 
     suspend fun seedCalendar(): Int = TestCalendar.seed(context)
 
+    /** Five made-up messages, one of them an attack and one with an attack hidden inside (D25). */
+    fun seedInbox(): Int = (context.applicationContext as DeputyApp).mail.test.seed()
+
     /** You let Zane's Deputy ask whether you're free on weekday evenings. */
     suspend fun pairZane(): Outcome = broker.user.mintGrant(zane, Direction.INBOUND, GrantTemplates.inboundFreeBusy())
 

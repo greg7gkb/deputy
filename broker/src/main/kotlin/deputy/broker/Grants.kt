@@ -49,6 +49,18 @@ sealed interface Permit {
         override val capabilities get() = setOf(Capabilities.SEND_INVITE)
     }
 
+    /**
+     * Read recent mail through the quarantined reader. What comes back is typed summaries
+     * (kind, proposed times, a flag), never who sent it or what it says (D25).
+     */
+    @Serializable @SerialName("mail_read")
+    data class MailRead(
+        val maxMessages: Int = 10,
+        val maxAgeDays: Int = 7,
+    ) : Permit {
+        override val capabilities get() = setOf(Capabilities.EMAIL_READ)
+    }
+
     /** Inbound: a peer may ask whether a slot is free, within these windows and this budget. */
     @Serializable @SerialName("inbound_free_busy")
     data class InboundFreeBusy(
@@ -130,6 +142,13 @@ object GrantTemplates {
         permits = listOf(Permit.Invites(allowedAttendees = attendees)),
         maxUses = 3,
         ttlMinutes = 1.days.inWholeMinutes.toInt(),
+    )
+
+    fun mailReading() = GrantRequest(
+        title = "Read mail as summaries",
+        permits = listOf(Permit.MailRead()),
+        maxUses = 10,
+        ttlMinutes = 2.hours.inWholeMinutes.toInt(),
     )
 
     fun inboundFreeBusy() = GrantRequest(

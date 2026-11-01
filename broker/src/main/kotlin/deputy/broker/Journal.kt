@@ -68,6 +68,8 @@ sealed interface Event {
         val undoOf: Long? = null,
         /** The id of what this action created, linked from the artifact back to here (D19). */
         val artifactId: String? = null,
+        /** The user's side of a mail read: who sent each message and its subject. The proposer got only [result] (D25). */
+        val mail: List<MailRecord> = emptyList(),
     ) : Event
 
     @Serializable @SerialName("action_refused")

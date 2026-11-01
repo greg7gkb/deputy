@@ -88,7 +88,7 @@ fun ActivityScreen(app: DeputyApp, snapshot: BrokerSnapshot, items: List<Activit
 private fun ActivityCard(item: ActivityItem, actor: String, focused: Boolean, undoing: Boolean, onUndo: (Long) -> Unit, onOpen: (ExternalRef) -> Unit) {
     val (bg, line) = when (item.tone) {
         Tone.REFUSED -> Palette.RedBg to Palette.RedLine
-        Tone.ASKED -> Palette.Card to AmberLine
+        Tone.ASKED, Tone.CONTAINED -> Palette.Card to AmberLine
         else -> Palette.Card to Palette.Line
     }
     val red = item.tone == Tone.REFUSED || item.tone == Tone.FAILED
@@ -103,6 +103,7 @@ private fun ActivityCard(item: ActivityItem, actor: String, focused: Boolean, un
         val tag = when (item.tone) {
             Tone.INBOUND -> "inbound" to BadgeStyle.INBOUND
             Tone.ASKED -> "asks first" to BadgeStyle.ASK
+            Tone.CONTAINED -> "steering contained" to BadgeStyle.ASK
             else -> null
         }
         val undoSeq = item.undoSeq

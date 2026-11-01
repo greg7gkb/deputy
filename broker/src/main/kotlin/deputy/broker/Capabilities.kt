@@ -32,7 +32,7 @@ object Capabilities {
 
     val GARAGE_SHOW = CapabilityId("garage.show_button")
     val GARAGE_OPEN = CapabilityId("garage.open")
-    val EMAIL_SUMMARIZE = CapabilityId("email.summarize")
+    val EMAIL_READ = CapabilityId("email.read_inbox")
     val EMAIL_SEND = CapabilityId("email.send_reply")
 
     val catalog: List<CapabilitySpec> = listOf(
@@ -45,7 +45,8 @@ object Capabilities {
         CapabilitySpec(ANSWER_FREE_BUSY, "Calendar", "Answer free/busy for someone", RiskTier.REVERSIBLE, AdapterTier.ON_DEVICE_API, "fact store", Direction.INBOUND),
         CapabilitySpec(GARAGE_SHOW, "Garage", "Show the button near home", RiskTier.REVERSIBLE, AdapterTier.HANDED_AFFORDANCE, "Door widget", available = false),
         CapabilitySpec(GARAGE_OPEN, "Garage", "Open the gate", RiskTier.PERMANENT, AdapterTier.HANDED_AFFORDANCE, "Door widget", requiresHumanGesture = true, available = false),
-        CapabilitySpec(EMAIL_SUMMARIZE, "Email", "Summarize new mail", RiskTier.REVERSIBLE, AdapterTier.CLOUD_API, "Gmail API", available = false),
+        // The first untrusted input: mail is read by the quarantined reader, and only typed summaries come back (D25).
+        CapabilitySpec(EMAIL_READ, "Email", "Read mail as typed summaries", RiskTier.REVERSIBLE, AdapterTier.CLOUD_API, "Gmail API"),
         CapabilitySpec(EMAIL_SEND, "Email", "Send a reply", RiskTier.PERMANENT, AdapterTier.CLOUD_API, "Gmail API", available = false),
     )
 
@@ -92,6 +93,15 @@ sealed interface Action {
         val attendees: List<String>,
     ) : Action { override val capability get() = Capabilities.SEND_INVITE }
 
+    /**
+     * Read recent mail, as typed summaries only. The text goes to the quarantined reader and
+     * never comes back; the proposer gets kinds, times and handles (docs/decisions.md D25).
+     */
+    @Serializable @SerialName("email.read_inbox")
+    data class ReadInbox(val maxResults: Int = 10, val sinceDays: Int = 7) : Action {
+        override val capability get() = Capabilities.EMAIL_READ
+    }
+
     /** Cancel an invite Deputy sent; guests are notified. No permit covers it: only the user can, from Activity. */
     @Serializable @SerialName("calendar.cancel_invite")
     data class CancelInvite(val artifactId: String) : Action {
@@ -116,4 +126,8 @@ sealed interface ActionResult {
 
     @Serializable @SerialName("invite_cancelled")
     data class InviteCancelled(val artifactId: String, val slot: Interval, val attendees: List<String>) : ActionResult
+
+    /** One summary per message read. No senders, subjects or text: see [MailSummary]. */
+    @Serializable @SerialName("inbox_read")
+    data class InboxRead(val messages: List<MailSummary>) : ActionResult
 }

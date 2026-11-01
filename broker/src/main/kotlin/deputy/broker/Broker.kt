@@ -146,6 +146,8 @@ data class BrokerState(
     val holds: Map<HoldId, HoldRecord> = emptyMap(),
     /** Invites Deputy sent and nobody has cancelled, by artifact id. */
     val invites: Map<String, InviteRecord> = emptyMap(),
+    /** Every message Deputy has read, by the handle the proposer was given (D25). */
+    val messages: Map<MessageId, MailRecord> = emptyMap(),
     /** (asker id, when) for every answered inbound question; the weekly budget counts these. */
     val inboundAnswered: List<Pair<String, Instant>> = emptyList(),
     val undone: Set<Long> = emptySet(),
@@ -169,6 +171,7 @@ data class BrokerState(
                 is ActionResult.InviteCancelled -> s = s.copy(invites = s.invites - r.artifactId)
                 else -> Unit
             }
+            if (e.mail.isNotEmpty()) s = s.copy(messages = s.messages + e.mail.associateBy { it.messageId })
             if (e.undoOf != null) s = s.copy(undone = s.undone + e.undoOf)
             s
         }
@@ -202,6 +205,10 @@ class Broker(
     private val newId: (prefix: String) -> String = ::randomId,
     /** Where links back to Activity point (D19); an https App Link base on a real phone. */
     private val linkBase: String = Artifacts.CUSTOM_BASE,
+    /** Null until a mail account is connected; reading mail then fails, and says so. */
+    private val mail: MailAdapter? = null,
+    /** The quarantined reader (D25). The broker calls it, holds its output at arm's length, and bounds it. */
+    private val mailReader: MailReader? = null,
 ) {
     private val mutex = Mutex()
     private val journal = Journal(journalStorage)
@@ -474,6 +481,7 @@ class Broker(
         val now = now()
         var adapterRef: String? = null
         var artifactId: String? = null
+        var mailRead: List<MailRecord> = emptyList()
         // Step 1: the side effect. Only a failure here is an ActionFailed.
         val result: ActionResult = try {
             when (action) {
@@ -509,6 +517,13 @@ class Broker(
                     adapterRef = adapterCall { calendar.createEvent(slot, action.title, action.attendees) }
                     ActionResult.InviteSent(slot, action.attendees)
                 }
+                is Action.ReadInbox -> {
+                    val source = mail ?: error("no mail account is connected")
+                    val reader = mailReader ?: error("no mail reader is configured")
+                    val raw = adapterCall("the mail account", ADAPTER_TIMEOUT * 2) { source.recent(now - action.sinceDays.days, action.maxResults) }.take(action.maxResults)
+                    mailRead = raw.map { m -> readOne(reader, m, now) }
+                    ActionResult.InboxRead(mailRead.map { it.summary() })
+                }
                 is Action.CancelInvite -> {
                     val invite = state.invites.getValue(action.artifactId)
                     adapterCall { calendar.cancelEvent(invite.adapterRef, invite.slot) }
@@ -524,10 +539,27 @@ class Broker(
             return Outcome.Failed("${Capabilities.spec(action.capability)?.title ?: "That"} didn't work. The details are in your Activity.")
         }
         // Step 2: the record. Once the world has changed it must be journaled, whatever else fails (F8).
-        val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf, artifactId))
+        val entry = record(Event.ActionExecuted(now, principal, grantId, action, result, requestId, adapterRef, undoOf, artifactId, mailRead))
         // Step 3: housekeeping. Calendar writes make the cached busy view stale; best effort.
-        if (action !is Action.FindFreeSlots) runCatching { invalidateBusy() }
+        if (action !is Action.FindFreeSlots && action !is Action.ReadInbox) runCatching { invalidateBusy() }
         return Outcome.Done(result, entry.seq)
+    }
+
+    /**
+     * One message through the quarantined reader. Whatever the reader says is bounded by
+     * [MailGuard]; if it fails or hangs, the message counts as unread ("other") rather than
+     * failing the whole read. Only the cleaned sender and subject are kept, for the user.
+     */
+    private suspend fun readOne(reader: MailReader, m: RawMessage, now: Instant): MailRecord {
+        val reading = try {
+            MailGuard.bound(adapterCall("the mail reader", READER_TIMEOUT) { reader.read(m, zone) }, now)
+        } catch (e: Exception) {
+            MailReading(MailKind.OTHER)
+        }
+        return MailRecord(
+            MessageId(newId("m")), m.adapterRef, MailGuard.display(m.from, MailGuard.MAX_FROM),
+            MailGuard.subject(m.subject, reading.kind), m.receivedAt, reading, reader.name,
+        )
     }
 
     /**
@@ -535,15 +567,15 @@ class Broker(
      * rather than holding the broker lock. Caveat: a blocking call that finishes after the timeout
      * still happens; the hold or event exists but is recorded as failed (decisions.md D18).
      */
-    private suspend fun <T> adapterCall(block: suspend () -> T): T {
+    private suspend fun <T> adapterCall(what: String = "the calendar", timeout: kotlin.time.Duration = ADAPTER_TIMEOUT, block: suspend () -> T): T {
         // Detached from the caller's job, but on the caller's dispatcher (and so its clock).
         val dispatcher = currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Default
         val call = adapterScope.async(dispatcher) { block() }
         return try {
-            withTimeout(ADAPTER_TIMEOUT) { call.await() }
+            withTimeout(timeout) { call.await() }
         } catch (e: TimeoutCancellationException) {
             call.cancel()
-            throw IllegalStateException("the calendar did not answer within ${ADAPTER_TIMEOUT.inWholeSeconds} s")
+            throw IllegalStateException("$what did not answer within ${timeout.inWholeSeconds} s")
         }
     }
 
@@ -632,6 +664,8 @@ class Broker(
         val APPROVAL_TTL = 15.minutes
         val FACT_FRESHNESS = 15.minutes
         val ADAPTER_TIMEOUT = 10.seconds
+        /** Per message. Generous, so an on-device model has room; the rule-based reader takes milliseconds. */
+        val READER_TIMEOUT = 30.seconds
         const val BUSY_HORIZON_DAYS = 30
         const val MAX_PENDING_PER_PRINCIPAL = 5
         const val MAX_PROPOSAL_CHARS = 4_000

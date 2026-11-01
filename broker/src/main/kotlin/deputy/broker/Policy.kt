@@ -120,6 +120,12 @@ object Policy {
                 else -> null
             }
 
+            permit is Permit.MailRead && action is Action.ReadInbox -> when {
+                action.maxResults !in 1..permit.maxMessages -> "it asks for more than ${permit.maxMessages} messages"
+                action.sinceDays !in 1..permit.maxAgeDays -> "it looks back further than ${permit.maxAgeDays} days"
+                else -> null
+            }
+
             else -> "the key does not cover this action"
         }
     }
@@ -166,6 +172,11 @@ object Policy {
             p.maxDurationMinutes !in 15..480 -> "an event must be 15 minutes to 8 hours"
             p.allowedAttendees != null && (p.allowedAttendees.size !in 1..20 || p.allowedAttendees.any { !isCleanText(it, 254) }) ->
                 "the list of people is not valid"
+            else -> null
+        }
+        is Permit.MailRead -> when {
+            p.maxMessages !in 1..25 -> "at most 25 messages at a time"
+            p.maxAgeDays !in 1..30 -> "mail can be at most 30 days old"
             else -> null
         }
         is Permit.InboundFreeBusy -> when {

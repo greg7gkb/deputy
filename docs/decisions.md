@@ -352,3 +352,62 @@ vulnerability Deputy exists to contain. MCP fits only with the broker in the mid
 
 Neither is needed yet. Gmail (Phase 1) will be a direct Gmail API adapter behind the broker,
 not a Gmail MCP server.
+
+## D25. Mail is untrusted input; the planner gets typed summaries only (firm)
+
+Chosen 2026-11-01, Phase 1's first piece. Email is the first content Deputy reads that other
+people wrote, so it is where prompt injection arrives. The rule: **no string an outsider wrote
+reaches the planner.** Mechanically:
+
+- **One capability, read-only to start.** `email.read_inbox` (`Action.ReadInbox`, `Permit.MailRead`:
+  at most 25 messages, at most 30 days back; the template asks for 10 and 7). Reversible, so no
+  confirmation, but it needs a key like everything else.
+- **The broker reads, the reader interprets, the planner gets types.** The mail adapter hands the
+  broker `RawMessage`s; the broker gives each to the quarantined reader (D26), which returns a
+  `MailReading`: a kind from a closed enum (meeting request, security code, other), proposed
+  times, a stated length, and a flag. The broker bounds that reading (`MailGuard.bound`: at most
+  five plausible future times, sane lengths, nothing at all for a code message), mints a handle
+  per message, and returns `MailSummary`s. Apart from the handle, a summary has no field that can
+  hold text. That is the containment argument, and it is a type, not a filter: there is no
+  sanitiser to get past, because there is nowhere for words to go.
+- **The user sees everything the planner doesn't.** The journal records, per message, the cleaned
+  sender and subject (shortened; digit runs masked when it's a code message), the reading and the
+  reader's name, so Activity can show who wrote what and what the planner got instead. Bodies are
+  never journaled or stored.
+- **The flag is for people, not for enforcement.** The reader marks text that seems to address an
+  AI assistant; Activity shows it, and it reaches the planner as one bit so it can say so. Nothing
+  depends on catching the attack: an attack the reader misses is contained the same way.
+- **What fooling the reader buys.** A wrong kind or a wrong time in a typed slot (the sample attack
+  gets "meeting request, tomorrow 9:00" through). Acting on that time still needs a calendar key,
+  and holds are undoable; sending anything to anyone still needs a key naming them and a tap.
+- **Gmail reads one label only.** `gmail.readonly` can't be scoped to a label, so the adapter
+  restricts itself: it lists only messages under the label named in `deputy.mailLabel` (default
+  "Deputy"), re-checks the label on each message, and keeps From, Subject, received time and the
+  plain-text body; no other headers, no attachments (D9's rule, applied to mail). Setup in
+  `docs/gmail-setup.md`. Auth is Play Services' Authorization API; tokens stay in memory.
+- **A test inbox** (`SampleMail`, seeded from Lab) stands in until Gmail is set up, the way the
+  test calendar does: two meeting requests (one with an instruction hidden in an invisible div),
+  a sign-in code, a newsletter, and a message that is nothing but an attack.
+
+Not done here: facts. Readings live in the journal (so handles resolve after a restart, D2), not
+the fact store; a fact like "Dana proposed Tue 14:00" comes when something needs to answer from it.
+
+## D26. The first quarantined reader is rules, not a model (default)
+
+The reader is an interface (`MailReader`) in the broker module and a separate `reader/` module
+for implementations, which depend on the broker for the slot types only: no port, no adapter, no
+network. The first implementation, `RuleMailReader`, is regexes: code words near digit runs,
+meeting words, weekday-plus-clock-time pairs within a sentence, durations, and a short list of
+assistant-addressing phrases.
+
+Why rules first: the security property doesn't depend on the reader being good, only on its
+output type, so the cheapest reader that produces the type proves the architecture. It is also
+deterministic, so the containment tests are exact.
+
+The model comes next. Pixel 7 (Tensor G2) is not on ML Kit GenAI's Gemini Nano device list as
+far as I know (assumption, not checked against the current list), so the plan is **Gemma 3n
+(E2B, int4) through MediaPipe's LLM Inference API / LiteRT-LM**, running on the phone, prompted
+to fill the same `MailReading` JSON and parsed strictly; anything that doesn't parse is "other".
+It needs a ~3 GB model file pushed to the phone (Gemma's licence is accepted on Hugging Face or
+Kaggle by the person) and seconds per message, so the broker gives the reader its own 30-second
+timeout, and a reader failure costs one message ("other"), not the read.

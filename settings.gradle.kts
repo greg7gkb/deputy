@@ -18,6 +18,8 @@ rootProject.name = "deputy"
 
 // The reference monitor. Pure Kotlin/JVM, no Android imports (docs/decisions.md D1).
 include(":broker")
+// The quarantined reader: untrusted content in, typed slots out, no authority (docs/decisions.md D25).
+include(":reader")
 // The cloud planner: Claude through the API, holding only an AgentPort (docs/decisions.md D20).
 include(":planner")
 // The Android app: Keyring, Activity, adapters, and the host that runs the broker.

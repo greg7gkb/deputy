@@ -40,7 +40,8 @@ data class KeyView(
     val active: Boolean,
 )
 
-enum class Tone { DONE, REFUSED, ASKED, INBOUND, SYSTEM, FAILED }
+/** CONTAINED: untrusted input that tried to steer the assistant, and didn't reach it (D25). */
+enum class Tone { DONE, REFUSED, ASKED, INBOUND, SYSTEM, FAILED, CONTAINED }
 
 data class ActivityItem(
     val seq: Long,
@@ -102,6 +103,7 @@ object Keyring {
             val who = it.allowedAttendees?.joinToString() ?: "anyone"
             parts += if (it.preapproved) "May send invites to $who without asking." else "May send invites to $who. Asks you first each time."
         }
+        if (p.any { it is Permit.MailRead }) parts += "May read recent mail as summaries: what kind each message is and any times it proposes. Never who sent it or what it says."
         p.filterIsInstance<Permit.InboundFreeBusy>().forEach {
             parts += "${g.holder.displayName} may ask if you're free ${days(it.weekdays)}, ${it.earliestHour}:00 to ${it.latestHour}:00. Nothing else."
         }
@@ -115,6 +117,7 @@ object Keyring {
         is Permit.Invites -> listOf(if (p.preapproved) "no asking" else "asks first", "≤ ${Format.duration(p.maxDurationMinutes)}") +
             (p.allowedAttendees?.let { listOf("only ${it.joinToString()}") } ?: listOf("anyone"))
         is Permit.InboundFreeBusy -> listOf("free/busy only", days(p.weekdays), "${p.earliestHour}–${p.latestHour}h", "${p.questionsPerWeek} questions/week")
+        is Permit.MailRead -> listOf("summaries only", "≤ ${p.maxMessages} messages", "last ${p.maxAgeDays} days")
     }
 
     private fun days(set: Set<DayOfWeek>): String {
@@ -252,7 +255,36 @@ object Narrator {
             }
             is ActionResult.InviteCancelled -> ActivityItem(seq, e.at, time, "You cancelled an invite",
                 "${Format.slot(r.slot, zone, s.now)} with ${r.attendees.joinToString()}. They were sent a cancellation.", footer, Tone.DONE)
+            is ActionResult.InboxRead -> narrateMail(seq, e, time, footer, zone, s.now)
         }
+    }
+
+    /**
+     * A mail read, from the user's side: each message as they'd recognise it, what the reader made
+     * of it, and the line that matters, that the proposer got none of the words (D25).
+     */
+    private fun narrateMail(seq: Long, e: Event.ActionExecuted, time: String, footer: String, zone: TimeZone, now: Instant): ActivityItem {
+        val flagged = e.mail.count { it.reading.addressesAssistant }
+        val lines = e.mail.map { m -> "• ${m.from}: \"${m.subject}\"\n   → ${mailLine(m.reading, zone, now)}" }
+        val body = buildString {
+            if (lines.isEmpty()) append("Nothing new.") else append(lines.joinToString("\n"))
+            append("\n\n${e.principal.displayName} was given only the kind of each message and any times in it. ")
+            append("No senders, subjects or text: those stayed with Deputy's reader.")
+            if (flagged > 0) append(" ${if (flagged == 1) "One message was" else "$flagged messages were"} written to instruct an AI assistant; it never saw ${if (flagged == 1) "that text" else "them"}.")
+        }
+        return ActivityItem(seq, e.at, time, "Read ${plural(e.mail.size, "email")} for ${e.principal.displayName.lowercase()}", body,
+            "untrusted input · read by ${e.mail.firstOrNull()?.reader ?: "the reader"}" + if (footer.isNotEmpty()) " · $footer" else "",
+            if (flagged > 0) Tone.CONTAINED else Tone.DONE)
+    }
+
+    fun mailLine(r: deputy.broker.MailReading, zone: TimeZone, now: Instant): String = buildString {
+        append(when (r.kind) {
+            deputy.broker.MailKind.MEETING_REQUEST -> "meeting request"
+            deputy.broker.MailKind.SECURITY_CODE -> "security code (held back; the code itself isn't kept)"
+            deputy.broker.MailKind.OTHER -> "other"
+        })
+        if (r.proposedTimes.isNotEmpty()) append(", proposes " + r.proposedTimes.joinToString(", ") { Format.slot(it, zone, now) })
+        if (r.addressesAssistant) append(". ⚠ Addressed to an AI assistant")
     }
 
     private fun narrateInbound(seq: Long, e: Event.InboundAsked, time: String, grants: Map<GrantId, GrantRecord>, zone: TimeZone, now: Instant): ActivityItem {
@@ -307,6 +339,7 @@ object Narrator {
         is Action.ReleaseHold -> "release a hold"
         is Action.SendInvite -> "send \"${a.title}\" ${Format.slot(Interval.of(a.start, a.durationMinutes), zone, now)} to ${a.attendees.joinToString()}"
         is Action.CancelInvite -> "cancel an invite"
+        is Action.ReadInbox -> "read up to ${a.maxResults} emails from the last ${plural(a.sinceDays, "day")}"
     }
 
     private fun shortWhat(a: Action) = Capabilities.spec(a.capability)?.title?.lowercase() ?: a.capability.value

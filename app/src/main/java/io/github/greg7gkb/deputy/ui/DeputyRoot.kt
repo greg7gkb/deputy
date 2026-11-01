@@ -48,6 +48,8 @@ fun DeputyRoot(
     onFocusDone: () -> Unit = {},
     accountTick: Int = 0,
     onChooseAccount: () -> Unit = {},
+    gmailStatus: String? = null,
+    onConnectGmail: () -> Unit = {},
 ) {
     val snapshot by app.broker.snapshots.collectAsStateWithLifecycle()
     val items = remember(snapshot) { Narrator.narrate(snapshot) }
@@ -64,7 +66,8 @@ fun DeputyRoot(
                     Tab.CAN_DO -> CanDoScreen()
                     Tab.KEYRING -> KeyringScreen(app, snapshot)
                     Tab.ACTIVITY -> ActivityScreen(app, snapshot, items, focusArtifact)
-                    Tab.LAB -> LabScreen(app, snapshot, labLog, onShowAsk = { tab = Tab.ASK }, accountTick = accountTick, onChooseAccount = onChooseAccount)
+                    Tab.LAB -> LabScreen(app, snapshot, labLog, onShowAsk = { tab = Tab.ASK }, accountTick = accountTick, onChooseAccount = onChooseAccount,
+                        gmailStatus = gmailStatus, onConnectGmail = onConnectGmail)
                 }
             }
             TabBar(tab) { tab = it; onFocusDone() }

@@ -10,7 +10,7 @@ import kotlinx.datetime.DayOfWeek
 /**
  * `adb shell am broadcast -a io.github.greg7gkb.deputy.DRIVE --es cmd <cmd> [--es text <request>]`
  *
- * cmd: seed | pair_zane | ask <text> | probe | zane_tue | zane_wed | zane_sat | stranger | zane_week | dump
+ * cmd: seed | seed_mail | mail_test | mail_gmail | pair_zane | ask <text> | probe | zane_tue | zane_wed | zane_sat | stranger | zane_week | dump
  * Deliberately has no approve/decline/revoke: the user's authority is only reachable by tapping.
  */
 class DebugDriver : BroadcastReceiver() {
@@ -22,6 +22,9 @@ class DebugDriver : BroadcastReceiver() {
             try {
                 val result: Any = when (cmd) {
                     "seed" -> app.lab.seedCalendar()
+                    "seed_mail" -> app.lab.seedInbox()
+                    "mail_test" -> { app.mail.useGmail = false; app.mail.source }
+                    "mail_gmail" -> { app.mail.useGmail = true; app.mail.source }
                     "pair_zane" -> app.lab.pairZane()
                     "ask" -> { app.scope.launch { app.planner.handle(intent.getStringExtra("text") ?: "") }; "started" }
                     "probe" -> { app.scope.launch { app.runProbe() }; "started" }

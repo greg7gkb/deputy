@@ -25,6 +25,9 @@ dependencies {
     api(libs.kotlinx.datetime)
 
     testImplementation(kotlin("test"))
+    // The mail tests run the real rule-based reader and its sample inbox. Test scope only: the
+    // broker itself never depends on a reader implementation.
+    testImplementation(project(":reader"))
     testImplementation(libs.kotlinx.coroutines.test)
 }
 

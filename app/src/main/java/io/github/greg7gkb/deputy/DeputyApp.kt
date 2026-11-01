@@ -15,6 +15,10 @@ import deputy.planner.Planner
 import deputy.planner.Transcript
 import io.github.greg7gkb.deputy.agent.StubPlanner
 import io.github.greg7gkb.deputy.calendar.AndroidCalendarAdapter
+import io.github.greg7gkb.deputy.mail.GmailAdapter
+import io.github.greg7gkb.deputy.mail.MailSwitch
+import io.github.greg7gkb.deputy.mail.TestInbox
+import deputy.reader.RuleMailReader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -69,6 +73,8 @@ class DeputyApp : Application() {
         private set
     val transcript = Transcript()
     val calendarAdapter by lazy { AndroidCalendarAdapter(this, BuildConfig.WRITE_CALENDAR) }
+    /** The test inbox until the person switches to Gmail in Lab (D25). */
+    val mail by lazy { MailSwitch(this, TestInbox(this), GmailAdapter(this)) }
     lateinit var lab: Lab
         private set
 
@@ -82,6 +88,9 @@ class DeputyApp : Application() {
             facts = FileFactStore(File(dir, "facts.json")),
             calendar = calendarAdapter,
             linkBase = WEB_LINK_BASE,
+            mail = mail,
+            // The quarantined reader (D26): rules for now, an on-device model later. No port, no network.
+            mailReader = RuleMailReader(),
         )
         val assistant = broker.agentPort(Principal.Assistant)
         planner = if (BuildConfig.ANTHROPIC_API_KEY.isNotEmpty()) {

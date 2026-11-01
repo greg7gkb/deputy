@@ -10,6 +10,9 @@ import deputy.broker.GrantId
 import deputy.broker.InMemoryFactStore
 import deputy.broker.InMemoryJournalStorage
 import deputy.broker.Interval
+import deputy.broker.MailKind
+import deputy.broker.MailSummary
+import deputy.broker.MessageId
 import deputy.broker.Outcome
 import deputy.broker.Principal
 import kotlinx.coroutines.delay
@@ -39,6 +42,17 @@ class ToolsTest {
         assertEquals(LocalDate(2026, 11, 2), assertIs<Action.FindFreeSlots>(find).from)
     }
 
+    @Test fun `an inbox result is built only from typed fields`() {
+        val read = assertIs<Action.ReadInbox>(assertIs<Tools.Call.Propose>(
+            Tools.parse("read_inbox", mapOf("key_id" to "g_1", "max_results" to 5, "since_days" to 3), ZONE)).action)
+        assertEquals(Action.ReadInbox(5, 3), read)
+        val start = kotlin.time.Instant.parse("2026-11-03T22:00:00Z")
+        val json = Tools.result(Outcome.Done(ActionResult.InboxRead(listOf(
+            MailSummary(MessageId("m_1"), start, MailKind.MEETING_REQUEST, listOf(Interval.of(start, 30)), 30, flagged = true))), 1), ZONE)
+        assertEquals("""{"status":"done","messages":[{"message_id":"m_1","received":"2026-11-03T14:00","kind":"meeting_request",""" +
+            """"proposed_times":[{"start":"2026-11-03T14:00","end":"2026-11-03T14:30"}],"duration_minutes":30,"flagged":true}]}""", json)
+    }
+
     @Test fun `bad inputs are explained, not guessed`() {
         assertFailsWith<IllegalArgumentException> { Tools.parse("place_hold", mapOf("key_id" to "g_1", "start" to "next tuesday", "duration_minutes" to 60, "label" to "x"), ZONE) }
         assertFailsWith<IllegalArgumentException> { Tools.parse("open_garage", emptyMap(), ZONE) }
@@ -46,7 +60,7 @@ class ToolsTest {
     }
 
     @Test fun `every tool is strict and its schema names every property as required`() {
-        assertEquals(6, Tools.definitions.size)
+        assertEquals(7, Tools.definitions.size)
         Tools.definitions.forEach { assertEquals(true, it.strict().orElse(false), it.name()) }
     }
 }

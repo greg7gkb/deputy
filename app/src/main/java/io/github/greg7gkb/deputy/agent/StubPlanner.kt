@@ -11,6 +11,7 @@ import deputy.broker.GrantRequest
 import deputy.broker.GrantTemplates
 import deputy.broker.HoldId
 import deputy.broker.Journal
+import deputy.broker.MailKind
 import deputy.broker.Outcome
 import deputy.broker.Permit
 import deputy.broker.present.Format
@@ -49,6 +50,7 @@ class StubPlanner(
     override val suggestions = listOf(
         "Find a time with Dana next week",
         "Send Dana an invite",
+        "Check my email",
     )
 
     /** Routes a typed request by keyword. Used when no API key is configured. */
@@ -60,6 +62,7 @@ class StubPlanner(
         val name = who.replaceFirstChar { it.uppercase() }
         when {
             "break" in text || "rules" in text || "probe" in text -> probeLimits(null)
+            "mail" in text || "inbox" in text -> checkMail()
             "invite" in text -> sendInvite(name)
             listOf("time", "meet", "find", "hold", "free").any { it in text } -> findTime(name)
             else -> say("Phase 0 has no language model, so I only understand a few requests. Try one of the suggestions.")
@@ -90,6 +93,17 @@ class StubPlanner(
         say("Options: " + slots.joinToString(", ") { Format.slot(it, zone, clock.now()) } + ". I saw only these times, never what's in your calendar.")
         val held = call(key, Action.PlaceHold(slots.first().start, 60, name))
         if (held is Outcome.Done) say("Held the first one. You can undo it from Activity.")
+    }
+
+    private suspend fun checkMail() {
+        say("I'll read your recent mail. I'll only get what kind each message is and any times in it, never the text.")
+        val key = ensureKey(setOf(Capabilities.EMAIL_READ), GrantTemplates.mailReading().copy(purpose = "Check mail for meeting requests")) ?: return
+        val read = call(key, Action.ReadInbox(maxResults = 10, sinceDays = 7))
+        val messages = ((read as? Outcome.Done)?.result as? ActionResult.InboxRead)?.messages ?: return
+        val requests = messages.filter { it.kind == MailKind.MEETING_REQUEST && !it.flagged }
+        say("${messages.size} messages. " + (if (requests.isEmpty()) "No meeting requests." else "Meeting requests proposing: " +
+            requests.joinToString("; ") { m -> m.proposedTimes.joinToString(" or ") { Format.slot(it, zone, clock.now()) } } + ".") +
+            messages.count { it.flagged }.let { if (it > 0) " $it flagged as written to instruct an assistant; I left those alone." else "" })
     }
 
     private suspend fun sendInvite(name: String) {
@@ -131,9 +145,11 @@ class StubPlanner(
         } else {
             say("(No calendar key yet, so the in-scope-key tests are skipped. Run \"Find a time\" first.)")
         }
+        attempt("Read mail with a calendar key.") { call(key ?: GrantId("g_none"), Action.ReadInbox()) }
+        attempt("Ask for a key to read a year of mail.") { request(GrantRequest("All my mail", listOf(Permit.MailRead(maxMessages = 25, maxAgeDays = 365)))) }
         attempt("Ask for a key that lets others query you.") { request(GrantRequest("Let anyone ask", listOf(Permit.InboundFreeBusy()))) }
         attempt("Ask for a key that never expires.") { request(GrantRequest("Calendar forever", listOf(Permit.FreeBusy()), ttlMinutes = null)) }
-        say("There's no action type for opening the garage or reading event titles. A planner can't even express them.")
+        say("There's no action type for opening the garage, reading event titles, reading an email's text or forwarding mail. A planner can't even express them.")
         say("$refused of $tried attempts refused by policy.")
     }
 
@@ -176,6 +192,7 @@ class StubPlanner(
             is ActionResult.HoldReleased -> "done: hold released"
             is ActionResult.InviteSent -> "done: invite sent"
             is ActionResult.InviteCancelled -> "done: invite cancelled"
+            is ActionResult.InboxRead -> "done: ${r.messages.size} summaries, no text"
         }
         is Outcome.GrantIssued -> "key issued"
         is Outcome.Refused -> "refused (${o.reason.name.lowercase()}): ${o.detail}"

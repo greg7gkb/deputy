@@ -322,6 +322,7 @@ private fun TodayCard(snapshot: BrokerSnapshot, items: List<ActivityItem>, onSee
                 CountRow("Asked you first", count(Tone.ASKED))
                 CountRow("Questions from others", count(Tone.INBOUND))
                 CountRow("Blocked attempts", count(Tone.REFUSED), Palette.Red)
+                if (count(Tone.CONTAINED) > 0) CountRow("Mail that tried to steer the assistant", count(Tone.CONTAINED))
             }
             Text(
                 "See activity",

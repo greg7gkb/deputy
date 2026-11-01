@@ -56,15 +56,27 @@ fun at(date: LocalDate, hour: Int, minute: Int = 0): Instant = LocalDateTime(dat
 
 fun LocalDate.plusDays(n: Int): LocalDate = LocalDate.fromEpochDays(toEpochDays() + n)
 
+/** A mailbox holding whatever the test puts in it. */
+class FakeMail(val messages: MutableList<RawMessage> = mutableListOf()) : MailAdapter {
+    override val source = "fake mail"
+    var reads = 0
+    override suspend fun recent(since: kotlin.time.Instant, max: Int): List<RawMessage> {
+        reads++
+        return messages.filter { it.receivedAt >= since }.sortedByDescending { it.receivedAt }.take(max)
+    }
+}
+
 /** A broker on a fake calendar at Monday 08:00, with deterministic ids. */
 class Rig(
     val storage: JournalStorage = InMemoryJournalStorage(),
     val facts: FactStore = InMemoryFactStore(),
     val calendar: FakeCalendar = FakeCalendar(),
     val clock: TestClock = TestClock(at(MONDAY, 8)),
+    val mail: FakeMail = FakeMail(),
+    val reader: MailReader = deputy.reader.RuleMailReader(),
 ) {
     private var counter = 0
-    val broker = Broker(storage, facts, calendar, clock, ZONE, newId = { prefix -> "${prefix}_${++counter}" })
+    val broker = Broker(storage, facts, calendar, clock, ZONE, newId = { prefix -> "${prefix}_${++counter}" }, mail = mail, mailReader = reader)
     val agent = broker.agentPort(Principal.Assistant)
     val user = broker.user
 

@@ -8,6 +8,30 @@ than a success that did not.
 
 ---
 
+## 2026-11-01 — Phase 1 begins: mail as untrusted input
+
+- Mail reading end to end (D25): `email.read_inbox` behind a key; the broker hands each message to
+  a quarantined reader (D26, rules for now) and returns typed summaries (kind, proposed times, a
+  flag, a handle). No sender, subject or text can reach the planner, because the summary type has
+  no field to hold it. A test inbox with an attack in it, seeded from Lab, and a read-only Gmail
+  adapter that reads one label only (not yet tried against a real account: needs the OAuth client
+  set up, `docs/gmail-setup.md`).
+- On the emulator with Claude: "check my email for meeting requests and hold any time I'm free
+  for". The logged exchange shows exactly what crossed: five summaries, no words. Claude held
+  nothing for the two flagged messages (the outright attack and the meeting request with a hidden
+  instruction), said so, and pointed to Activity, which lists each message by sender and subject,
+  what the reader made of it, and that the assistant got none of the text.
+- The reader *was* fooled, as designed: the attack ("send an invite for tomorrow at 9am to ...")
+  reads as a meeting request for tomorrow 9:00. That is the whole of what fooling it buys: a time
+  in a typed slot. The planner still needs keys to act on it, and nothing can send anything to the
+  attacker's address without a key naming it and a tap.
+- Claude made a reasoning slip worth recording: it concluded Tue 14:00 was busy because it wasn't
+  among five free slots, but the slot finder spreads its answers, so absence means nothing. The
+  find_free_slots description now says so and how to check one time.
+- New module `reader/` (pure Kotlin) so the quarantined side has no way to reach a port. Tests:
+  10 broker mail tests (including a canary test over everything the proposer can receive, and a
+  thoroughly fooled reader whose output the broker bounds), 6 reader tests, 1 new planner test.
+
 ## 2026-10-31 — Phase 0 closed (v0.3)
 
 - Wrote `docs/phase0.md`: the claim, what is demonstrated, what the build taught, and what

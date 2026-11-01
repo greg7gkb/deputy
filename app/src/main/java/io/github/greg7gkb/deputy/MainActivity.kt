@@ -10,7 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import io.github.greg7gkb.deputy.mail.GmailAuth
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -28,6 +32,27 @@ class MainActivity : ComponentActivity() {
     private val chooseAccount = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { accountTick++ }
     /** Bumped after the chooser returns, so the UI re-checks account visibility. */
     private var accountTick by mutableStateOf(0)
+    /** What the last Gmail connect attempt said, for Lab (D25). */
+    private var gmailStatus by mutableStateOf<String?>(null)
+    /** Google's consent screen for gmail.readonly. Deputy never sees the password or keeps the token. */
+    private val gmailConsent = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        gmailStatus = if (GmailAuth.finish(this, res.data)) "connected" else "not connected (consent was not given)"
+    }
+
+    private fun connectGmail() = lifecycleScope.launch {
+        gmailStatus = try {
+            when (val s = GmailAuth.connect(this@MainActivity)) {
+                GmailAuth.Start.Connected -> "connected"
+                is GmailAuth.Start.NeedsConsent -> {
+                    gmailConsent.launch(IntentSenderRequest.Builder(s.pendingIntent.intentSender).build())
+                    "waiting for Google's consent screen"
+                }
+            }
+        } catch (e: Exception) {
+            // ApiException 10 (DEVELOPER_ERROR) means no OAuth client matches this package and signing key.
+            "couldn't connect: ${e.message ?: e::class.simpleName}. See docs/gmail-setup.md."
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val bars = SystemBarStyle.light(BACKGROUND, BACKGROUND)
@@ -45,6 +70,8 @@ class MainActivity : ComponentActivity() {
                     focusArtifact = focusArtifact,
                     onFocusDone = { focusArtifact = null },
                     accountTick = accountTick,
+                    gmailStatus = gmailStatus,
+                    onConnectGmail = { connectGmail() },
                     onChooseAccount = {
                         val target = app.calendarAdapter.writableCalendar()?.account
                         chooseAccount.launch(AccountManager.newChooseAccountIntent(

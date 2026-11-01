@@ -38,6 +38,11 @@ android {
         val writeCalendar = localProps.getProperty("deputy.writeCalendar", "Deputy sandbox")
         buildConfigField("String", "WRITE_CALENDAR", "\"$writeCalendar\"")
 
+        // Mail is read only from the Gmail label with this display name (D25). Google can't scope
+        // access to a label, so this is Deputy's own restriction, enforced in GmailAdapter (D9).
+        val mailLabel = localProps.getProperty("deputy.mailLabel", "Deputy")
+        buildConfigField("String", "MAIL_LABEL", "\"$mailLabel\"")
+
         // The cloud planner's key (D20). Empty or the placeholder means "no planner configured".
         val apiKey = localProps.getProperty("anthropic.apiKey", "").takeUnless { it.startsWith("REPLACE_") }.orEmpty()
         buildConfigField("String", "ANTHROPIC_API_KEY", "\"$apiKey\"")
@@ -70,11 +75,13 @@ kotlin {
 dependencies {
     implementation(project(":broker"))
     implementation(project(":planner"))
+    implementation(project(":reader"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.play.services.auth)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

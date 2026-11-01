@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.sp
 import deputy.broker.present.ExternalRef
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
@@ -106,10 +107,15 @@ private fun ActivityCard(item: ActivityItem, actor: String, focused: Boolean, un
         }
         val undoSeq = item.undoSeq
         val external = item.external
-        if (tag != null || item.footer.isNotBlank() || undoSeq != null || external != null) {
+        if (tag != null || item.footer.isNotBlank()) {
             Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 tag?.let { (text, style) -> Badge(text, style) }
                 Text(item.footer, style = Type.Mono, modifier = Modifier.weight(1f))
+            }
+        }
+        // Actions get their own row, so a long label never squeezes the footer.
+        if (undoSeq != null || external != null) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
                 if (external != null) SmallButton("Open in Calendar", onClick = { onOpen(external) })
                 if (undoSeq != null) {
                     var armed by remember { mutableStateOf(false) }

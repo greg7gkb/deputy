@@ -21,6 +21,10 @@ than a success that did not.
   which message was answered. Test-inbox replies never leave the phone.
 - The Gmail adapter can send now (gmail.send, asked for at connect alongside readonly). Neither
   reading nor sending has been tried against a real account yet.
+- A live test (`-PliveApi`) now runs the injection scenario against the real API with a user who
+  approves *everything*: it asserts no outsider's word appears in anything Deputy sends Claude and
+  that nothing is sent anywhere. First run: Claude checked each proposed time individually (the
+  find_free_slots hint worked), held Dana's two, skipped both flagged messages, and said why.
 - Version 0.4 (build 7). Not tagged: tag `v0.4` after a pass on the Pixel.
 
 ## 2026-11-01 — Phase 1 begins: mail as untrusted input

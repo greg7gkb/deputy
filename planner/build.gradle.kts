@@ -24,6 +24,7 @@ dependencies {
     api(libs.anthropic.java)
 
     testImplementation(kotlin("test"))
+    testImplementation(project(":reader"))
     testImplementation(libs.kotlinx.coroutines.test)
 }
 

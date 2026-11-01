@@ -186,6 +186,8 @@ class Broker(
     private val clock: Clock = Clock.System,
     val zone: TimeZone = TimeZone.currentSystemDefault(),
     private val newId: (prefix: String) -> String = ::randomId,
+    /** Where links back to Activity point (D19); an https App Link base on a real phone. */
+    private val linkBase: String = Artifacts.CUSTOM_BASE,
 ) {
     private val mutex = Mutex()
     private val journal = Journal(journalStorage)
@@ -473,7 +475,7 @@ class Broker(
                     val slot = Interval.of(action.start, action.durationMinutes)
                     val holdId = HoldId(newId("h"))
                     artifactId = holdId.value
-                    adapterRef = adapterCall { calendar.placeHold(slot, "Hold: ${action.label}", Artifacts.note(holdId.value)) }
+                    adapterRef = adapterCall { calendar.placeHold(slot, "Hold: ${action.label}", Artifacts.note(holdId.value, linkBase)) }
                     ActionResult.HoldPlaced(holdId, slot)
                 }
                 is Action.ReleaseHold -> {

@@ -86,18 +86,18 @@ data class Interval(val start: SInstant, val end: SInstant) {
  * invite's description goes to every attendee), it is kept out (docs/decisions.md D19).
  */
 object Artifacts {
-    const val SCHEME = "deputy"
-    const val HOST = "activity"
+    /** Works without any web setup, but most apps (Google Calendar included) won't make it tappable. */
+    const val CUSTOM_BASE = "deputy://activity/"
     /** Every note Deputy writes into an artifact starts with this; adapters use it to recognise their own. */
     const val NOTE_PREFIX = "Placed by Deputy."
 
-    fun link(artifactId: String) = "$SCHEME://$HOST/$artifactId"
-    fun note(artifactId: String) = "$NOTE_PREFIX See it, or undo it, in Deputy: ${link(artifactId)}"
+    fun link(artifactId: String, base: String = CUSTOM_BASE) = base + artifactId
+    fun note(artifactId: String, base: String = CUSTOM_BASE) = "$NOTE_PREFIX See it, or undo it, in Deputy: ${link(artifactId, base)}"
 
-    /** The artifact id in a Deputy link, or null if it isn't one. */
-    fun parse(link: String): String? {
-        val prefix = "$SCHEME://$HOST/"
-        val id = link.removePrefix(prefix).takeIf { link.startsWith(prefix) } ?: return null
+    /** The artifact id in a link under one of [bases], or null if it isn't one. */
+    fun parse(link: String, bases: List<String> = listOf(CUSTOM_BASE)): String? {
+        val base = bases.firstOrNull { link.startsWith(it) } ?: return null
+        val id = link.removePrefix(base).substringBefore('?').substringBefore('#')
         return id.takeIf { it.isNotEmpty() && it.length <= 64 && it.all { c -> c.isLetterOrDigit() || c == '_' } }
     }
 }

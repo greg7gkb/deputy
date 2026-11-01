@@ -59,7 +59,7 @@ class Rig(
     val clock: TestClock = TestClock(at(MONDAY, 8)),
 ) {
     private var counter = 0
-    val broker = Broker(storage, facts, calendar, clock, ZONE) { prefix -> "${prefix}_${++counter}" }
+    val broker = Broker(storage, facts, calendar, clock, ZONE, newId = { prefix -> "${prefix}_${++counter}" })
     val agent = broker.agentPort(Principal.Assistant)
     val user = broker.user
 

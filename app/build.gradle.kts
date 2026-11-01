@@ -16,6 +16,13 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1"
+
+        // Links Deputy writes into what it creates (D19). An https App Link, verified by
+        // /.well-known/assetlinks.json on this host, so calendar apps make it tappable.
+        buildConfigField("String", "LINK_HOST", "\"greg7gkb.github.io\"")
+        buildConfigField("String", "LINK_PATH", "\"/deputy/activity/\"")
+        manifestPlaceholders["linkHost"] = "greg7gkb.github.io"
+        manifestPlaceholders["linkPath"] = "/deputy/activity/"
     }
 
     buildTypes {

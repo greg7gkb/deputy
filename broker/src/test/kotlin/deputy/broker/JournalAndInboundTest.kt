@@ -184,6 +184,9 @@ class ArtifactTest {
 
     @Test fun `links parse strictly`() {
         assertEquals("h_123", Artifacts.parse("deputy://activity/h_123"))
+        val web = "https://example.org/deputy/activity/"
+        assertEquals("h_123", Artifacts.parse(web + "h_123?utm=x", listOf(Artifacts.CUSTOM_BASE, web)))
+        assertNull(Artifacts.parse(web + "h_123"))
         for (bad in listOf("deputy://activity/", "deputy://activity/../x", "https://evil/h_1", "deputy://keyring/h_1", "deputy://activity/" + "a".repeat(65))) {
             assertNull(Artifacts.parse(bad), bad)
         }

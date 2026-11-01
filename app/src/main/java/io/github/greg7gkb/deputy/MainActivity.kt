@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Only well-formed Deputy links are accepted; anything else is ignored. */
-    private fun linkedArtifact(intent: Intent?): String? = intent?.dataString?.let(Artifacts::parse)
+    private fun linkedArtifact(intent: Intent?): String? = intent?.dataString?.let { Artifacts.parse(it, DeputyApp.LINK_BASES) }
 
     /** The person can grant or revoke in Settings while we're away, so re-check on every resume. */
     override fun onResume() {

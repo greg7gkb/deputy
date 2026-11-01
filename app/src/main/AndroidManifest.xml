@@ -28,6 +28,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="deputy" android:host="activity" />
             </intent-filter>
+            <!-- The same links as https App Links, verified against the host's assetlinks.json. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${linkHost}" android:pathPrefix="${linkPath}" />
+            </intent-filter>
         </activity>
         <!-- Tier 1: notification triage. Granted by the user in Settings (Notification access). -->
         <service

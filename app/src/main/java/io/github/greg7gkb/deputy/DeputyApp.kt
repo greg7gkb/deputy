@@ -1,6 +1,7 @@
 package io.github.greg7gkb.deputy
 
 import android.app.Application
+import deputy.broker.Artifacts
 import deputy.broker.Broker
 import deputy.broker.FileFactStore
 import deputy.broker.FileJournalStorage
@@ -21,6 +22,12 @@ import java.io.File
  * The UI gets [broker]'s UserPort. The planner gets an AgentPort and nothing else.
  */
 class DeputyApp : Application() {
+    companion object {
+        val WEB_LINK_BASE = "https://${BuildConfig.LINK_HOST}${BuildConfig.LINK_PATH}"
+        /** Links Deputy accepts: the https App Link form it writes, and the custom-scheme form. */
+        val LINK_BASES = listOf(WEB_LINK_BASE, Artifacts.CUSTOM_BASE)
+    }
+
     lateinit var broker: Broker
         private set
     lateinit var planner: StubPlanner
@@ -37,6 +44,7 @@ class DeputyApp : Application() {
             journalStorage = FileJournalStorage(File(dir, "journal.tsv")),
             facts = FileFactStore(File(dir, "facts.json")),
             calendar = AndroidCalendarAdapter(this),
+            linkBase = WEB_LINK_BASE,
         )
         planner = StubPlanner(broker.agentPort(Principal.Assistant), broker.zone)
         lab = Lab(this, broker)

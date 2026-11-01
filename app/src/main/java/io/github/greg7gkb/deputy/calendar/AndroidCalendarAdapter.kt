@@ -1,6 +1,10 @@
 package io.github.greg7gkb.deputy.calendar
 
 import android.Manifest
+import android.accounts.Account
+import android.content.ContentResolver
+import android.os.Bundle
+import android.util.Log
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -71,6 +75,7 @@ class AndroidCalendarAdapter(
         check(ours) { "the hold was not found in the calendar" }
         val deleted = context.contentResolver.delete(uri, null, null)
         check(deleted == 1) { "the calendar did not delete the hold" }
+        requestUpload()
     }
 
     override suspend fun createEvent(slot: Interval, title: String, attendees: List<String>): String = withContext(Dispatchers.IO) {
@@ -102,24 +107,49 @@ class AndroidCalendarAdapter(
                 put(Attendees.ATTENDEE_STATUS, Attendees.ATTENDEE_STATUS_INVITED)
             })
         }
+        requestUpload()
         return eventId.toString()
     }
 
     /**
-     * The calendar Deputy may write to: the writable, visible one named [writeCalendarName],
-     * preferring an account calendar over a device-only one. Returns its id and a description.
+     * Writes through CalendarContract stay on the phone until Android's next calendar sync, which
+     * can be many minutes away; found when an invite sat unsynced (dirty) on the Pixel. Ask for an
+     * immediate upload for the target calendar's account. Best effort: if Android refuses, the
+     * periodic sync still carries it.
      */
-    fun writableCalendarId(): Pair<Long, String>? {
+    private fun requestUpload() {
+        val account = writableCalendar()?.account ?: return
+        runCatching {
+            ContentResolver.requestSync(account, CalendarContract.AUTHORITY, Bundle().apply {
+                putBoolean(ContentResolver.SYNC_EXTRAS_UPLOAD, true)
+                putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
+            })
+        }.onFailure { Log.w("DeputyCalendar", "couldn't request a calendar sync: ${it.message}") }
+    }
+
+    /** The calendar Deputy writes to, and the account that syncs it (null for device-only calendars). */
+    data class Target(val id: Long, val description: String, val account: Account?)
+
+    /**
+     * The calendar Deputy may write to: the writable, visible one named [writeCalendarName],
+     * preferring an account calendar over a device-only one.
+     */
+    fun writableCalendar(): Target? {
         if (context.checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) return null
         val projection = arrayOf(Calendars._ID, Calendars.ACCOUNT_NAME, Calendars.ACCOUNT_TYPE)
         val selection = "${Calendars.VISIBLE} = 1 AND ${Calendars.CALENDAR_ACCESS_LEVEL} >= ${Calendars.CAL_ACCESS_CONTRIBUTOR} AND ${Calendars.CALENDAR_DISPLAY_NAME} = ?"
-        val found = mutableListOf<Triple<Long, String, Boolean>>()
+        val found = mutableListOf<Triple<Long, String, String>>()
         context.contentResolver.query(Calendars.CONTENT_URI, projection, selection, arrayOf(writeCalendarName), null)?.use { c ->
-            while (c.moveToNext()) found += Triple(c.getLong(0), c.getString(1).orEmpty(), c.getString(2) == CalendarContract.ACCOUNT_TYPE_LOCAL)
+            while (c.moveToNext()) found += Triple(c.getLong(0), c.getString(1).orEmpty(), c.getString(2).orEmpty())
         }
-        val pick = found.sortedBy { it.third }.firstOrNull() ?: return null
-        return pick.first to "$writeCalendarName (" + (if (pick.third) "on this phone only" else pick.second) + ")"
+        val (id, name, type) = found.sortedBy { it.third == CalendarContract.ACCOUNT_TYPE_LOCAL }.firstOrNull() ?: return null
+        val local = type == CalendarContract.ACCOUNT_TYPE_LOCAL
+        return Target(id, "$writeCalendarName (" + (if (local) "on this phone only" else name) + ")", if (local) null else Account(name, type))
     }
+
+    /** Kept for callers that only need the id and a description. */
+    fun writableCalendarId(): Pair<Long, String>? = writableCalendar()?.let { it.id to it.description }
 
     private fun requirePermission(permission: String) {
         if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {

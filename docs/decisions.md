@@ -310,8 +310,12 @@ create it, rather than falling back to the primary calendar. Reading busy times 
 every visible calendar, so availability is real. Cleanup is deleting one calendar. On the
 emulator, seeding the test calendar also creates a device-only "Deputy sandbox".
 
-Not yet tested: whether an invite with attendees, created in a Google calendar through
-CalendarContract, makes Google email the attendees once it syncs.
+Found on the Pixel: a write through CalendarContract stays on the phone (`dirty=1`, no sync id)
+until Android's next calendar sync, which can be many minutes away, so an approved invite didn't
+appear in Google Calendar. After each write the adapter now requests an expedited upload sync for
+the target calendar's account (best effort; the periodic sync still covers a refusal). An invite
+with an attendee did upload and get a Google id. Still not checked: whether Google then emails the
+attendee (dana@example.com is a reserved domain, so nothing real was sent).
 
 Conversations: the Claude planner now keeps the conversation between requests (so "Monday,
 please" works), append-only, until "New conversation", 30 idle minutes, or an error.

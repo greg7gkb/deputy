@@ -8,6 +8,15 @@ than a success that did not.
 
 ---
 
+## 2026-10-31 — Writes weren't reaching Google
+
+- On the Pixel, an approved invite didn't appear in Google Calendar. The planner log showed
+  Claude and the broker had done their part; the event sat in the phone's calendar store marked
+  dirty, waiting for Android's periodic sync. A manual sync uploaded it in seconds. Deputy now
+  requests an upload sync after every calendar write.
+- Also from that session: Claude, asked "can you view my contacts?", said plainly it couldn't
+  and named the tools it has, which is the behaviour the closed tool vocabulary is meant to give.
+
 ## 2026-10-31 — Version 0.2
 
 - Started versioning the app: 0.1 (tagged retroactively) was Phase 0 end to end; 0.2 adds the

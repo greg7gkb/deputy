@@ -164,3 +164,7 @@ Empirical scans of the phone's installed apps (the capability scanner, the APK
 composition analysis, and their outputs) live outside this repo in `~/code/deputy-scan/`,
 because they hold pulled third-party APKs and package dumps. Findings are summarised in
 `docs/design.md` section 8.
+
+## License
+
+Copyright 2026 Greg Benson. Licensed under the Apache License, Version 2.0; see `LICENSE`.
